@@ -1,18 +1,3 @@
-/*
- * Copyright (c) Facebook, Inc. and its affiliates.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 #include "BOSSQueryBuilder.h"
 
 #include "velox/common/base/Fs.h"
@@ -117,6 +102,7 @@ const std::vector<std::string>& BossQueryBuilder::getTableNames() {
   return kTableNames_;
 }
 
+//created by Meta, reserved for debugging
 BossPlan BossQueryBuilder::getQueryPlan(int queryId) const {
   switch (queryId) {
     case 1:
@@ -1648,32 +1634,65 @@ const std::unordered_map<std::string, std::vector<std::string>>
             "partsupp",
             tpch::getTableSchema(tpch::Table::TBL_PARTSUPP)->names())};
 
-BossPlan BossQueryBuilder::getVeloxPlanBuilder(std::vector<FormExpr> veloxExprList) const {
-  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
-  for(auto it = veloxExprList.begin(); it != veloxExprList.end(); ++it) {
-      auto const& veloxExpr = *it;
-
-      const auto selectedRowType = getRowType(veloxExpr.tableName, veloxExpr.selectedColumns);
-      const auto& fileColumnNames = getFileColumnNames(veloxExpr.tableName);
-
-      core::PlanNodeId tablePlanNodeId;
-      auto plan = PlanBuilder(planNodeIdGenerator)
-                      .tableScan(veloxExpr.tableName, selectedRowType, fileColumnNames,
-                                 veloxExpr.fieldFiltersVec)
-                      .capturePlanNodeId(tablePlanNodeId)
-                      .project(veloxExpr.projectionsVec)
-                      .partialAggregation(veloxExpr.groupingKeysVec, veloxExpr.aggregatesVec)
-                      .localPartition({})
-                      .finalAggregation()
-                      .planNode();
-      if(it == (veloxExprList.end() - 1)) {
-      BossPlan context;
-      context.plan = std::move(plan);
-      context.dataFiles[tablePlanNodeId] = getTableFilePaths(veloxExpr.tableName);
-      context.dataFileFormat = format_;
-      return context;
-      }
+void BossQueryBuilder::reformVeloxExpr(std::vector<FormExpr> &veloxExprList) const {
+  std::vector<std::unordered_map<std::string, std::string>> columnAliaseList;
+  for (int i = 0; i < veloxExprList.size(); i++) {
+    const auto &fileColumnNames = getFileColumnNames(veloxExprList[i].tableName);
+    columnAliaseList.emplace_back(fileColumnNames);
   }
+  for (int i = 0; i < veloxExprList.size(); i++) {
+    for (auto it = veloxExprList[i].selectedColumns.begin(); it != veloxExprList[i].selectedColumns.end();) {
+      auto name = *it;
+      bool resizeFlag = false;
+      for (int j = 0; j < columnAliaseList.size(); j++) {
+        auto idx = columnAliaseList[j].find(name);
+        if (idx != columnAliaseList[j].end() && j != i) { // remove column name in the wrong table planBuilder
+          if (std::find(veloxExprList[j].selectedColumns.begin(), veloxExprList[j].selectedColumns.end(), name) ==
+              veloxExprList[j].selectedColumns.end())
+            veloxExprList[j].selectedColumns.push_back(name);
+          it = veloxExprList[i].selectedColumns.erase(it);
+          resizeFlag = true;
+          break;
+        }
+      }
+      if (!resizeFlag)
+        ++it;
+    }
+  }
+}
+
+BossPlan BossQueryBuilder::getVeloxPlanBuilder(std::vector<FormExpr> veloxExprList) const {
+  BossPlan context;
+  core::PlanNodePtr planPtr;
+  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+  for (auto it = veloxExprList.begin(); it != veloxExprList.end(); ++it) {
+    auto const &veloxExpr = *it;
+
+    const auto selectedRowType = getRowType(veloxExpr.tableName, veloxExpr.selectedColumns);
+    const auto &fileColumnNames = getFileColumnNames(veloxExpr.tableName);
+
+    core::PlanNodeId tablePlanNodeId;
+    auto plan = PlanBuilder(planNodeIdGenerator)
+            .tableScan(veloxExpr.tableName, selectedRowType, fileColumnNames,
+                       veloxExpr.fieldFiltersVec)
+            .capturePlanNodeId(tablePlanNodeId)
+            .project(veloxExpr.projectionsVec)
+            .partialAggregation(veloxExpr.groupingKeysVec, veloxExpr.aggregatesVec)
+            .localPartition({})
+            .finalAggregation();
+
+    if (!veloxExpr.orderByVec.empty()) {
+      plan.orderBy(veloxExpr.orderByVec, false);
+    }
+    if (veloxExpr.limit > 0) {
+      plan.limit(0, veloxExpr.limit, false);
+    }
+    planPtr = plan.planNode();
+    context.dataFiles[tablePlanNodeId] = getTableFilePaths(veloxExpr.tableName);
+  }
+  context.plan = std::move(planPtr);
+  context.dataFileFormat = format_;
+  return context;
 }
 
 } // namespace facebook::velox::exec::test

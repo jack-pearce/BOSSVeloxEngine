@@ -2,8 +2,6 @@ cmake_minimum_required(VERSION 3.10)
 project(BOSSVeloxEngine)
 
 ############################## Custom build modes ###############################
-set(CMAKE_C_COMPILER   "/Library/Developer/CommandLineTools/usr/bin/cc")
-set(CMAKE_CXX_COMPILER "/Library/Developer/CommandLineTools/usr/bin/c++")
 set(CMAKE_CXX_FLAGS_SANITIZE "-fno-omit-frame-pointer -fsanitize=address,signed-integer-overflow,null,alignment,bounds,function,return,vla-bound -O0 -g"
   CACHE STRING
   "Flags used by the C++ compiler during Sanitize builds."

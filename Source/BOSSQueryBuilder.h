@@ -1,18 +1,3 @@
-/*
- * Copyright (c) Facebook, Inc. and its affiliates.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 #pragma once
 
 #include "velox/dwio/common/Options.h"
@@ -30,6 +15,8 @@ struct FiledFilter {
   std::vector<AtomicExpr> element;
 };
 struct FormExpr {
+  int32_t limit = 0;
+  bool orderBy = false;
   std::string tableName;
   std::vector<std::string> selectedColumns;
   std::vector<FiledFilter> tmpFieldFiltersVec;
@@ -37,7 +24,11 @@ struct FormExpr {
   std::vector<std::string> projectionsVec;
   std::vector<std::string> groupingKeysVec;
   std::vector<std::string> aggregatesVec;
+  std::vector<std::string> orderByVec;
+
   void clear() {
+    limit = 0;
+    orderBy = false;
     tableName.clear();
     selectedColumns.clear();
     tmpFieldFiltersVec.clear();
@@ -45,6 +36,7 @@ struct FormExpr {
     projectionsVec.clear();
     groupingKeysVec.clear();
     aggregatesVec.clear();
+    orderByVec.clear();
   }
 };
 
@@ -99,6 +91,9 @@ class BossQueryBuilder {
   /// Get the query plan for a given TPC-H query number.
   /// @param queryId TPC-H query number
   BossPlan getQueryPlan(int queryId) const;
+
+  void reformVeloxExpr(std::vector<FormExpr> &veloxExprList) const;
+
   BossPlan getVeloxPlanBuilder(std::vector<FormExpr> veloxExprList) const;
 
   /// Get the TPC-H table names present.
