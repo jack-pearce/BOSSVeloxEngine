@@ -48,6 +48,7 @@ std::ostream& operator<<(std::ostream& s, std::vector<std::int64_t> const& input
 
 #define STRINGIFY(x) #x        // NOLINT
 #define STRING(x) STRINGIFY(x) // NOLINT
+//#define DebugInfo
 
 void ensureTaskCompletion(exec::Task* task) {
   // ASSERT_TRUE requires a function with return type void.
@@ -243,19 +244,13 @@ struct EngineImplementation {
     static FiledFilter tmpFieldFilter;
     std::visit(
         boss::utilities::overload(
-            [&](bool a) {
+            [&](auto a) {
               AtomicExpr element;
               element.data = to_string(a);
               element.type = cValue;
               tmpFieldFilter.element.emplace_back(element);
             },
             [&](std::vector<bool>::reference a) {
-            },
-            [&](std::int64_t a) {
-              AtomicExpr element;
-              element.data = to_string(a);
-              element.type = cValue;
-              tmpFieldFilter.element.emplace_back(element);
             },
             [&](std::vector<int64_t> values) {
               ExpressionSpanArguments vs;
@@ -265,12 +260,6 @@ struct EngineImplementation {
             [&](char const* a) {
               AtomicExpr element;
               element.data = a;
-              element.type = cValue;
-              tmpFieldFilter.element.emplace_back(element);
-            },
-            [&](std::double_t a) {
-              AtomicExpr element;
-              element.data = to_string(a);
               element.type = cValue;
               tmpFieldFilter.element.emplace_back(element);
             },
@@ -292,7 +281,9 @@ struct EngineImplementation {
             },
             [&](ComplexExpression const& expression) {
               auto headName = expression.getHead().getName();
+#ifdef DebugInfo
               std::cout << "headName  " << headName << endl;
+#endif
               if(cmpFunCheck(headName)) { // field filter or join op pre-process
                 tmpFieldFilter.opName.clear();
                 tmpFieldFilter.element.clear();
@@ -301,14 +292,15 @@ struct EngineImplementation {
               auto process = [&](auto const& arguments) {
                 for(auto it = arguments.begin(); it != arguments.end(); ++it) {
                   auto const& argument = *it;
+#ifdef DebugInfo
                   std::cout << "argument  " << argument << endl;
+#endif
                   std::stringstream out;
                   out << argument;
                   std::string tmpArhStr = out.str();
 
                   if(tmpArhStr.substr(0, 10) == "DateObject") {
                     std::string dateString = tmpArhStr.substr(12, 10);
-                    std::cout << "DateObject  " << dateString << endl;
                     AtomicExpr element;
                     element.data = "'" + dateString + "'" + "::DATE";
                     element.type = cValue;
@@ -317,7 +309,6 @@ struct EngineImplementation {
                   }
                   if(tmpArhStr.substr(0, 4) == "Date") {
                     std::string dateString = tmpArhStr.substr(6, 10);
-                    std::cout << "Date  " << dateString << endl;
                     AtomicExpr element;
                     element.data = "'" + dateString + "'" + "::DATE";
                     element.type = cValue;
@@ -341,21 +332,17 @@ struct EngineImplementation {
                 }
               };
               process(expression.getArguments());
-            },
-            [](auto /*args*/) { throw std::runtime_error("unexpected argument type"); }),
+            }),
         (Expression::SuperType const&)expression);
   }
 
   void bossExprToVeloxProjection(Expression const& expression, std::vector<std::string>& projectionList) {
     std::visit(
         boss::utilities::overload(
-            [&](bool a) {
+            [&](auto a) {
               projectionList.push_back(to_string(a));
             },
             [&](std::vector<bool>::reference a) {
-            },
-            [&](std::int64_t a) {
-              projectionList.push_back(to_string(a));
             },
             [&](std::vector<int64_t> values) {
               ExpressionSpanArguments vs;
@@ -365,9 +352,6 @@ struct EngineImplementation {
             },
             [&](char const* a) {
               projectionList.push_back(a);
-            },
-            [&](std::double_t a) {
-              projectionList.push_back(to_string(a));
             },
             [&](Symbol const& a) {
               if(std::find(curVeloxExpr.selectedColumns.begin(),
@@ -381,12 +365,16 @@ struct EngineImplementation {
             },
             [&](ComplexExpression const& expression) {
               auto headName = expression.getHead().getName();
+#ifdef DebugInfo
               std::cout << "headName  " << headName << endl;
+#endif
               projectionList.push_back(headName);
               auto process = [&](auto const& arguments) {
                 for(auto it = arguments.begin(); it != arguments.end(); ++it) {
                   auto const& argument = *it;
+#ifdef DebugInfo
                   std::cout << "argument  " << argument << endl;
+#endif
                   std::stringstream out;
                   out << argument;
                   std::string tmpArhStr = out.str();
@@ -412,8 +400,7 @@ struct EngineImplementation {
                 }
               };
               process(expression.getArguments());
-            },
-            [](auto /*args*/) { throw std::runtime_error("unexpected argument type"); }),
+            }),
         (Expression::SuperType const&)expression);
   }
 
@@ -436,11 +423,15 @@ struct EngineImplementation {
             },
             [&](ComplexExpression const& expression) {
               auto headName = expression.getHead().getName();
+#ifdef DebugInfo
               std::cout << "headName  " << headName << endl;
+#endif
               auto process = [&](auto const &arguments) {
                   for (auto it = arguments.begin(); it != arguments.end(); ++it) {
                     auto const &argument = *it;
+#ifdef DebugInfo
                     std::cout << "argument  " << argument << endl;
+#endif
                     std::stringstream out;
                     out << argument;
                     std::string tmpArhStr = out.str();
@@ -493,11 +484,15 @@ struct EngineImplementation {
             [&](ComplexExpression const& expression) {
                 std::string projectionName;
                 auto headName = expression.getHead().getName();
+#ifdef DebugInfo
                 std::cout << "headName  " << headName << endl;
+#endif
                 auto process = [&](auto const &arguments) {
                     for (auto it = arguments.begin(); it != arguments.end(); ++it) {
                       auto const &argument = *it;
+#ifdef DebugInfo
                       std::cout << "argument  " << argument << endl;
+#endif
                       std::stringstream out;
                       out << argument;
                       std::string tmpArhStr = out.str();
@@ -565,7 +560,6 @@ struct EngineImplementation {
 
   boss::Expression evaluate(Expression const& e,
                             std::string const& namespaceIdentifier = DefaultNamespace) {
-    std::cout << e << std::endl;
     veloxExprList.clear();
     curVeloxExpr.clear();
     bossExprToVelox(e);
@@ -575,21 +569,28 @@ struct EngineImplementation {
     const auto [cursor, actualResults] = benchmark.run(queryPlan);
     auto task = cursor->task();
     ensureTaskCompletion(task.get());
-
+#ifdef DebugInfo
     printResults(actualResults);
     std::cout << std::endl;
-
-    //    const auto stats = task->taskStats();
-    //    std::cout << fmt::format("Execution time: {}",
-    //                             succinctMillis(stats.executionEndTimeMs -
-    //                             stats.executionStartTimeMs))
-    //              << std::endl;
-    //    std::cout << fmt::format("Splits total: {}, finished: {}", stats.numTotalSplits,
-    //                             stats.numFinishedSplits)
-    //              << std::endl;
-    //    std::cout << printPlanWithStats(*queryPlan.plan, stats, false) << std::endl;
-    //    std::cout << std::endl;
-    return true;
+//    const auto stats = task->taskStats();
+//    std::cout << fmt::format("Execution time: {}",
+//                             succinctMillis(stats.executionEndTimeMs -
+//                                            stats.executionStartTimeMs))
+//              << std::endl;
+//    std::cout << fmt::format("Splits total: {}, finished: {}", stats.numTotalSplits,
+//                             stats.numFinishedSplits)
+//              << std::endl;
+//    std::cout << printPlanWithStats(*queryPlan.plan, stats, false) << std::endl;
+#endif
+    std::cout << std::endl;
+    ExpressionArguments bossResults;
+    for (const auto &vector: actualResults) {
+      for (vector_size_t i = 0; i < vector->size(); ++i) {
+        bossResults.emplace_back(vector->toString(i));
+      }
+    }
+    auto result = boss::ComplexExpression(boss::Symbol("List"), move(bossResults));
+    return result;
   }
 };
 
