@@ -10,10 +10,38 @@ struct AtomicExpr {
   enum ColumnType type;
   std::string data;
 };
+
 struct FiledFilter {
   std::string opName;
   std::vector<AtomicExpr> element;
+  void clear() {
+    opName.clear();
+    element.clear();
+  }
 };
+
+struct JoinPair {
+    std::string leftKey;
+    std::string rightKey;
+};
+
+struct aggrPair {
+  std::string op;
+  std::string oldName;
+  std::string newName;
+};
+
+struct JoinPairList {
+  bool leftFlag = false;
+  std::vector<std::string> leftKeys;
+  std::vector<std::string> rightKeys;
+  void clear() {
+    leftFlag = false;
+    leftKeys.clear();
+    rightKeys.clear();
+  }
+};
+
 struct FormExpr {
   int32_t limit = 0;
   bool orderBy = false;
@@ -21,10 +49,14 @@ struct FormExpr {
   std::vector<std::string> selectedColumns;
   std::vector<FiledFilter> tmpFieldFiltersVec;
   std::vector<std::string> fieldFiltersVec;
+  std::string remainingFilter;
   std::vector<std::string> projectionsVec;
   std::vector<std::string> groupingKeysVec;
-  std::vector<std::string> aggregatesVec;
+  std::vector<aggrPair> aggregatesVec;
   std::vector<std::string> orderByVec;
+  std::vector<JoinPair> hashJoinVec;
+  std::vector<JoinPairList> hashJoinListVec;
+  std::string filter;  // can be used to filter non-field clause
 
   void clear() {
     limit = 0;
@@ -33,10 +65,14 @@ struct FormExpr {
     selectedColumns.clear();
     tmpFieldFiltersVec.clear();
     fieldFiltersVec.clear();
+    remainingFilter.clear();
     projectionsVec.clear();
     groupingKeysVec.clear();
     aggregatesVec.clear();
     orderByVec.clear();
+    hashJoinVec.clear();
+    hashJoinListVec.clear();
+    filter.clear();
   }
 };
 
@@ -92,12 +128,22 @@ class BossQueryBuilder {
   /// @param queryId TPC-H query number
   BossPlan getQueryPlan(int queryId) const;
 
-  void reformVeloxExpr(std::vector<FormExpr> &veloxExprList) const;
-
-  BossPlan getVeloxPlanBuilder(std::vector<FormExpr> veloxExprList) const;
-
   /// Get the TPC-H table names present.
   static const std::vector<std::string>& getTableNames();
+
+  const std::unordered_map<std::string, std::string>& getFileColumnNames(
+          const std::string& tableName) const {
+    return tableMetadata_.at(tableName).fileColumnNames;
+  }
+
+  void reformVeloxExpr(std::vector<FormExpr> &veloxExprList,
+                       std::vector<std::unordered_map<std::string, std::string>> columnAliaseList);
+
+  BossPlan getVeloxPlanBuilder(std::vector<FormExpr> veloxExprList,
+                               std::vector<std::unordered_map<std::string, std::string>> columnAliaseList);
+
+  std::vector<std::unordered_map<std::string, std::string>>
+  getFileColumnNamesMap(std::vector<FormExpr> &veloxExprList);
 
  private:
   BossPlan getQ1Plan() const;
@@ -128,11 +174,6 @@ class BossQueryBuilder {
     auto columnSelector = std::make_shared<dwio::common::ColumnSelector>(
         tableMetadata_.at(tableName).type, columnNames);
     return columnSelector->buildSelectedReordered();
-  }
-
-  const std::unordered_map<std::string, std::string>& getFileColumnNames(
-      const std::string& tableName) const {
-    return tableMetadata_.at(tableName).fileColumnNames;
   }
 
   std::unordered_map<std::string, BossTableMetadata> tableMetadata_;
