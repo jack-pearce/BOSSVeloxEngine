@@ -1,15 +1,11 @@
 #include "BOSSQueryBuilder.h"
-#include <folly/Benchmark.h>
-#include <folly/init/Init.h>
-#include <gflags/gflags.h>
 
-#include "velox/common/base/SuccinctPrinter.h"
 #include "velox/common/file/FileSystems.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
 #include "velox/dwio/parquet/RegisterParquetReader.h"
-#include "velox/exec/PlanNodeStats.h"
+//#include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/Split.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
