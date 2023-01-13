@@ -38,30 +38,34 @@ if(NOT DEFINED BOSS_BUILD_FROM_SOURCE)
 endif()
 if(BOSS_BUILD_FROM_SOURCE)
   if(NOT DEFINED BOSS_SOURCE_BRANCH)
-    set(BOSS_SOURCE_BRANCH master CACHE STRING "if boss core is built from source, which thread should be fetched")
+    set(BOSS_SOURCE_BRANCH v0.3 CACHE STRING "if boss core is built from source, which thread should be fetched")
   endif()
   if(NOT DEFINED BOSS_SOURCE_REPOSITORY)
     if(NOT GITHUB_TOKEN)
-      message( FATAL_ERROR "You need to pass -DGITHUB_TOKEN=... to pass a github token to fetch the boss release" )
+      if(DEFINED ENV{GITHUB_TOKEN})
+        set(GITHUB_TOKEN $ENV{GITHUB_TOKEN})
+      endif()
+    endif()
+    if(NOT GITHUB_TOKEN)
+      message( FATAL_ERROR "You need to pass -DGITHUB_TOKEN=... to pass a github token to fetch the boss release, alternatively, specify -DBOSS_SOURCE_REPOSITORY to use an alternative repository" )
     endif()
     set(BOSS_SOURCE_REPOSITORY https://little-big-h:${GITHUB_TOKEN}@github.com/symbol-store/BOSS.git)
   endif()
   message("getting boss sources from ${BOSS_SOURCE_REPOSITORY} branch ${BOSS_SOURCE_BRANCH}")
   ExternalProject_Add(BOSS
     GIT_REPOSITORY ${BOSS_SOURCE_REPOSITORY}
-    DOWNLOAD_DIR $ENV{HOME}/.cmake-downloads/${CMAKE_PROJECT_NAME}
     GIT_TAG ${BOSS_SOURCE_BRANCH}
-		CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=${BOSSVeloxEngine_BINARY_DIR}/deps $<IF:$<CONFIG:>,,-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}> -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}  -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER} -DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}
+    CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=${BOSSVeloxEngine_BINARY_DIR}/deps $<IF:$<CONFIG:>,,-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}> -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}  -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER} -DCMAKE_CXX_FLAGS=${DCMAKE_CXX_FLAGS}
     )
 else()
-ExternalProject_Add(BOSS
-	URL https://api.github.com/repos/symbol-store/BOSS/releases/assets/48287799
-  HTTP_HEADER "Authorization: token ${GITHUB_TOKEN}" "Accept: application/octet-stream"
-  DOWNLOAD_DIR $ENV{HOME}/.cmake-downloads/${CMAKE_PROJECT_NAME}
-  SOURCE_DIR ${BOSSVeloxEngine_BINARY_DIR}/deps
-  CONFIGURE_COMMAND ""
-  BUILD_COMMAND ""
-  INSTALL_COMMAND ""
+  ExternalProject_Add(BOSS
+    URL https://api.github.com/repos/symbol-store/BOSS/releases/assets/48287799
+    HTTP_HEADER "Authorization: token ${GITHUB_TOKEN}" "Accept: application/octet-stream"
+    DOWNLOAD_DIR $ENV{HOME}/.cmake-downloads
+    SOURCE_DIR ${BOSSVeloxEngine_BINARY_DIR}/deps
+    CONFIGURE_COMMAND ""
+    BUILD_COMMAND ""
+    INSTALL_COMMAND ""
   )
 endif()
 
@@ -121,7 +125,7 @@ if (NOT WIN32)
   target_link_libraries(BOSSVeloxEngine dl)
 endif (NOT WIN32)
 
-set_property(TARGET BOSSVeloxEngine PROPERTY CXX_STANDARD 17)
+set_property(TARGET BOSSVeloxEngine PROPERTY CXX_STANDARD 20)
 if(MSVC)
   target_compile_options(BOSSVeloxEngine PUBLIC "/Zc:__cplusplus")
   target_compile_options(BOSSVeloxEngine PUBLIC "/EHsc")
