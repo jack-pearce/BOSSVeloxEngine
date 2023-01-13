@@ -1,10 +1,12 @@
 #include "BOSSQueryBuilder.h"
+#include "VectorBridge.h"
 
 #include "velox/common/file/FileSystems.h"
 #include "velox/connectors/hive/HiveConnector.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
 #include "velox/dwio/parquet/RegisterParquetReader.h"
+#include "velox/functions/prestosql/aggregates/tests/AggregationTestBase.h"
 //#include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/Split.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
@@ -13,6 +15,7 @@
 #include "velox/parse/TypeResolver.h"
 //
 using namespace facebook::velox;
+using namespace facebook::velox::test;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 using namespace facebook::velox::dwio::common;
@@ -44,7 +47,7 @@ std::ostream& operator<<(std::ostream& s, std::vector<std::int64_t> const& input
 
 #define STRINGIFY(x) #x        // NOLINT
 #define STRING(x) STRINGIFY(x) // NOLINT
-//#define DebugInfo
+#define DebugInfo
 
 void ensureTaskCompletion(exec::Task* task) {
   // ASSERT_TRUE requires a function with return type void.
@@ -66,7 +69,38 @@ void printResults(const std::vector<RowVectorPtr>& results) {
   }
 }
 
-class BossBenchmark {
+void mockSchemaRelease(BossSchema*) {}
+void mockArrayRelease(BossArray*) {}
+
+BossSchema makeBossSchema(int format) {
+  return BossSchema{
+          .format = format,
+          .name = nullptr,
+          .metadata = nullptr,
+          .n_children = 0,
+          .children = nullptr,
+          .release = mockSchemaRelease,
+          .private_data = nullptr,
+  };
+}
+
+BossArray makeBossArray(
+        const void *buffers,
+        int64_t length,
+        int64_t nullCount = 0) {
+  return BossArray{
+          .length = length,
+          .null_count = nullCount,
+          .offset = 0,
+          .n_children = 0,
+          .buffers = buffers,
+          .children = nullptr,
+          .release = mockArrayRelease,
+          .private_data = nullptr,
+  };
+}
+
+class BossBenchmark : public VectorTestBase{
 public:
   void initialize() {
     functions::prestosql::registerAllScalarFunctions();
@@ -104,6 +138,10 @@ public:
       noMoreSplits = true;
     };
     return readCursor(params, addSplits);
+  }
+
+  RowVectorPtr makeRowVectorWrap(const std::vector<VectorPtr>& children) {
+    return makeRowVector(children);
   }
 };
 
@@ -196,49 +234,84 @@ struct EngineImplementation {
     }
   }
 
-  void formatVeloxFilter_Join() {
-    curVeloxExpr.fieldFiltersVec.clear();
-    curVeloxExpr.hashJoinVec.clear();
-    auto fileColumnNames = queryBuilder->getFileColumnNames(curVeloxExpr.tableName);
-    for (auto it = curVeloxExpr.tmpFieldFiltersVec.begin(); it != curVeloxExpr.tmpFieldFiltersVec.end(); ++it) {
-      auto const &filter = *it;
-      if (filter.opName == "Greater") {
-        if (filter.element[0].type == cName && filter.element[1].type == cValue) {
-          auto tmp = fmt::format("{} > {}", filter.element[0].data,
-                                 filter.element[1].data); // the column name should be on the left side.
-          if (fileColumnNames.find(filter.element[0].data) == fileColumnNames.end())
-            curVeloxExpr.filter = std::move(tmp);  // not belong to any field
-          else
+    void formatVeloxFilter_Join() {
+      curVeloxExpr.fieldFiltersVec.clear();
+      curVeloxExpr.hashJoinVec.clear();
+      if (curVeloxExpr.tableName == "tmp") {
+        for (auto it = curVeloxExpr.tmpFieldFiltersVec.begin(); it != curVeloxExpr.tmpFieldFiltersVec.end(); ++it) {
+          auto const &filter = *it;
+          if (filter.opName == "Greater") {
+            if (filter.element[0].type == cName && filter.element[1].type == cValue) {
+              auto tmp = fmt::format("{} > {}", filter.element[0].data,
+                                     filter.element[1].data); // the column name should be on the left side.
+              curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
+            } else if (filter.element[1].type == cName && filter.element[0].type == cValue) {
+              auto tmp = fmt::format("{} < {}", filter.element[1].data, filter.element[0].data);
+              curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
+            }
+          } else if (filter.opName == "Between") {
+            auto tmp = fmt::format("{} between {} and {}", filter.element[0].data, filter.element[1].data,
+                                   filter.element[2].data);
             curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
-        } else if (filter.element[1].type == cName && filter.element[0].type == cValue) {
-          auto tmp = fmt::format("{} < {}", filter.element[1].data, filter.element[0].data);
-          if (fileColumnNames.find(filter.element[1].data) == fileColumnNames.end())
-            curVeloxExpr.filter = std::move(tmp);
-          else
+          } else if (filter.opName == "Equal") {
+            if (filter.element[0].type == cName && filter.element[1].type == cName) {
+              JoinPair tmpJoinPair;
+              tmpJoinPair.leftKey = filter.element[0].data;
+              tmpJoinPair.rightKey = filter.element[1].data;
+              curVeloxExpr.hashJoinVec.push_back(tmpJoinPair);
+            } else {
+              auto tmp = fmt::format("{} = {}", filter.element[0].data, filter.element[1].data);
+              curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
+            }
+          } else if (filter.opName == "StringContains") {
+            auto length = filter.element[1].data.size();
+            auto tmp = fmt::format("{} like '%{}%'", filter.element[0].data,
+                                   filter.element[1].data.substr(1, length - 2));
+            curVeloxExpr.remainingFilter = std::move(tmp);
+          } else VELOX_FAIL("unexpected Filter type");
+        }
+      } else {
+        auto fileColumnNames = queryBuilder->getFileColumnNames(curVeloxExpr.tableName);
+        for (auto it = curVeloxExpr.tmpFieldFiltersVec.begin(); it != curVeloxExpr.tmpFieldFiltersVec.end(); ++it) {
+          auto const &filter = *it;
+          if (filter.opName == "Greater") {
+            if (filter.element[0].type == cName && filter.element[1].type == cValue) {
+              auto tmp = fmt::format("{} > {}", filter.element[0].data,
+                                     filter.element[1].data); // the column name should be on the left side.
+              if (fileColumnNames.find(filter.element[0].data) == fileColumnNames.end())
+                curVeloxExpr.filter = std::move(tmp);  // not belong to any field
+              else
+                curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
+            } else if (filter.element[1].type == cName && filter.element[0].type == cValue) {
+              auto tmp = fmt::format("{} < {}", filter.element[1].data, filter.element[0].data);
+              if (fileColumnNames.find(filter.element[1].data) == fileColumnNames.end())
+                curVeloxExpr.filter = std::move(tmp);
+              else
+                curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
+            }
+          } else if (filter.opName == "Between") {
+            auto tmp = fmt::format("{} between {} and {}", filter.element[0].data, filter.element[1].data,
+                                   filter.element[2].data);
             curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
+          } else if (filter.opName == "Equal") {
+            if (filter.element[0].type == cName && filter.element[1].type == cName) {
+              JoinPair tmpJoinPair;
+              tmpJoinPair.leftKey = filter.element[0].data;
+              tmpJoinPair.rightKey = filter.element[1].data;
+              curVeloxExpr.hashJoinVec.push_back(tmpJoinPair);
+            } else {
+              auto tmp = fmt::format("{} = {}", filter.element[0].data, filter.element[1].data);
+              curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
+            }
+          } else if (filter.opName == "StringContains") {
+            auto length = filter.element[1].data.size();
+            auto tmp = fmt::format("{} like '%{}%'", filter.element[0].data,
+                                   filter.element[1].data.substr(1, length - 2));
+            curVeloxExpr.remainingFilter = std::move(tmp);
+          } else VELOX_FAIL("unexpected Filter type");
         }
-      } else if (filter.opName == "Between") {
-        auto tmp = fmt::format("{} between {} and {}", filter.element[0].data, filter.element[1].data,
-                               filter.element[2].data);
-        curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
-      } else if (filter.opName == "Equal") {
-        if (filter.element[0].type == cName && filter.element[1].type == cName) {
-          JoinPair tmpJoinPair;
-          tmpJoinPair.leftKey = filter.element[0].data;
-          tmpJoinPair.rightKey = filter.element[1].data;
-          curVeloxExpr.hashJoinVec.push_back(tmpJoinPair);
-        } else {
-          auto tmp = fmt::format("{} = {}", filter.element[0].data, filter.element[1].data);
-          curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
-        }
-      } else if (filter.opName == "StringContains") {
-        auto length = filter.element[1].data.size();
-        auto tmp = fmt::format("{} like '%{}%'", filter.element[0].data,
-                               filter.element[1].data.substr(1, length - 2));
-        curVeloxExpr.remainingFilter = std::move(tmp);
-      } else VELOX_FAIL("unexpected Filter type");
+      }
     }
-  }
 
     static void formatVeloxProjection(std::vector<std::string> &projectionList,
                                       std::unordered_map<std::string, std::string> projNameMap) {
@@ -633,43 +706,147 @@ struct EngineImplementation {
 
   ~EngineImplementation() {}
 
-  boss::Expression evaluate(Expression const& e,
-                            std::string const& namespaceIdentifier = DefaultNamespace) {
+  boss::Expression evaluate_tpch(Expression const &e,
+                                 std::string const &namespaceIdentifier = DefaultNamespace) {
     veloxExprList.clear();
     curVeloxExpr.clear();
     projNameMap.clear();
     aggrNameMap.clear();
     bossExprToVelox(e);
     veloxExprList.push_back(curVeloxExpr); //push back the last expression to the vector
-    auto columnAliaseList = queryBuilder->getFileColumnNamesMap(veloxExprList);
-    queryBuilder->reformVeloxExpr(veloxExprList, columnAliaseList);
-    const auto queryPlan = queryBuilder->getVeloxPlanBuilder(veloxExprList, columnAliaseList);
-    const auto [cursor, actualResults] = benchmark.run(queryPlan);
-    auto task = cursor->task();
-    ensureTaskCompletion(task.get());
-#ifdef DebugInfo
-    printResults(actualResults);
-    std::cout << std::endl;
-//    const auto stats = task->taskStats();
-//    std::cout << fmt::format("Execution time: {}",
-//                             succinctMillis(stats.executionEndTimeMs -
-//                                            stats.executionStartTimeMs))
-//              << std::endl;
-//    std::cout << fmt::format("Splits total: {}, finished: {}", stats.numTotalSplits,
-//                             stats.numFinishedSplits)
-//              << std::endl;
-//    std::cout << printPlanWithStats(*queryPlan.plan, stats, false) << std::endl;
-#endif
-    std::cout << std::endl;
     ExpressionArguments bossResults;
-    for (const auto &vector: actualResults) {
-      for (vector_size_t i = 0; i < vector->size(); ++i) {
-        bossResults.emplace_back(vector->toString(i));
+
+    const std::vector<int64_t> int64Vector0 = {1, 2, 3, 4, 5};
+    const std::vector<int64_t> int64Vector1 = {10, 20, 30, 40, 50};
+    auto bossSchema0 = makeBossSchema(1);  //int64
+    auto bossSchema1 = makeBossSchema(1);  //int64
+    auto bossArray0 = makeBossArray((const void *) int64Vector0.data(), int64Vector0.size());
+    auto bossArray1 = makeBossArray((const void *) int64Vector1.data(), int64Vector1.size());
+    auto data0 = importFromBossAsViewer(bossSchema0, bossArray0);
+    auto data1 = importFromBossAsViewer(bossSchema1, bossArray1);
+    auto veloxData = benchmark.makeRowVectorWrap({data0, data1});
+
+    if (curVeloxExpr.tableName != "tmp") {
+      auto columnAliaseList = queryBuilder->getFileColumnNamesMap(veloxExprList);
+      queryBuilder->reformVeloxExpr(veloxExprList, columnAliaseList);
+      const auto queryPlan = queryBuilder->getVeloxPlanBuilder(veloxExprList, columnAliaseList);
+      const auto [cursor, results] = benchmark.run(queryPlan);
+      auto task = cursor->task();
+      ensureTaskCompletion(task.get());
+#ifdef DebugInfo
+      printResults(results);
+      std::cout << std::endl;
+#endif
+      for (const auto &vector: results) {
+        for (vector_size_t i = 0; i < vector->size(); ++i) {
+          bossResults.emplace_back(vector->toString(i));
+        }
       }
+    } else {
+      const auto queryPlan = queryBuilder->getVeloxPlanBuilderVector(veloxExprList, veloxData);
+      auto [task, results] = bossQuery(queryPlan.plan);
+#ifdef DebugInfo
+      printResults(results);
+      std::cout << std::endl;
+#endif
+      auto args = ExpressionArguments();
+      for (const auto &vector: results) {
+        for (int i = 0; i < vector->childrenSize(); ++i) {
+          auto bossArray = exportToBoss(vector->childAt(i));
+          bossResults.clear();
+          for (int j = 0; j < vector->childAt(i)->size(); ++j) {
+            bossResults.emplace_back(bossArray[j]);
+          }
+          args.push_back(boss::ComplexExpression(boss::Symbol("List"), std::move(bossResults)));
+        }
+      }
+      return ComplexExpression("List"_, std::move(args));
     }
+
     auto result = boss::ComplexExpression(boss::Symbol("List"), move(bossResults));
     return result;
   }
+
+  void veloxEval(Expression const& expression) {
+    std::visit(
+            boss::utilities::overload(
+                    [&](bool a) {
+                    },
+                    [&](std::vector<bool>::reference a) {
+                    },
+                    [&](std::int64_t a) {
+                        curVeloxExpr.limit = a;
+                    },
+                    [&](std::vector<int64_t> values) {
+                        ExpressionSpanArguments vs;
+                        vs.emplace_back(Span<std::int64_t>({values.begin(), values.end()}));
+                        bossExprToVelox(ComplexExpression("List"_, {}, {}, std::move(vs)));
+                    },
+                    [&](char const* a) {
+                    },
+                    [&](std::double_t a) {
+                    },
+                    [&](Symbol const& a) {
+                        if (!curVeloxExpr.tableName.empty()) // traverse for a new plan builder, triggerred by select and join
+                        {
+                          veloxExprList.push_back(curVeloxExpr);
+                          curVeloxExpr.clear();
+                        }
+                        curVeloxExpr.tableName = a.getName(); // indicate table names
+                    },
+                    [&](std::string const& a) {
+                    },
+                    [&](ComplexExpression const& expression) {
+                        std::string projectionName;
+                        auto headName = expression.getHead().getName();
+#ifdef DebugInfo
+                        std::cout << "headName  " << headName << endl;
+#endif
+                        auto process = [&](auto const &arguments) {
+                            std::vector<std::string> lastProjectionsVec;
+                            if (headName == "As") { //save the latest ProjectionsVec to restore for AS - aggregation
+                              lastProjectionsVec = curVeloxExpr.projectionsVec;
+                              curVeloxExpr.projectionsVec.clear();
+                            }
+                            for (auto it = arguments.begin(); it != arguments.end(); ++it) {
+                              auto const &argument = *it;
+#ifdef DebugInfo
+                              std::cout << "argument  " << argument << endl;
+#endif
+                              std::stringstream out;
+                              out << argument;
+                              std::string tmpArhStr = out.str();
+
+                              if (headName == "Where") {
+                                std::visit([this](auto &&argument) { return bossExprToVeloxFilter_Join(argument); },
+                                           argument.getArgument());
+                                if (curVeloxExpr.tmpFieldFiltersVec.size() > 0)
+                                  formatVeloxFilter_Join();
+                              } else {
+                                std::visit([this](auto &&argument) { return bossExprToVelox(argument); },
+                                           argument.getArgument());
+                              }
+                            }
+                        };
+                        process(expression.getArguments());
+                    },
+                    [](auto /*args*/) { throw std::runtime_error("unexpected argument type"); }),
+            (Expression::SuperType const&)expression);
+  }
+
+//  boss::Expression evaluate(Expression const& e){
+//    bossExprToVelox(e);
+//
+//    std::cout << std::endl;
+//    ExpressionArguments bossResults;
+//    for (const auto &vector: results) {
+//      for (vector_size_t i = 0; i < vector->size(); ++i) {
+//        bossResults.emplace_back(vector->toString(i));
+//      }
+//    }
+//    auto result = boss::ComplexExpression(boss::Symbol("List"), move(bossResults));
+//    return result;
+//  }
 };
 
 Engine::Engine() : impl([]() -> EngineImplementation& { return *(new EngineImplementation()); }()) {
@@ -680,7 +857,10 @@ Engine::Engine() : impl([]() -> EngineImplementation& { return *(new EngineImple
 }
 Engine::~Engine() { delete &impl; }
 
-boss::Expression Engine::evaluate(Expression const& e) { return impl.evaluate(e); }
+boss::Expression Engine::evaluate(Expression const& e) {
+  return impl.evaluate_tpch(e);
+//  return impl.evaluate(e);
+}
 } // namespace boss::engines::velox
 
 #ifdef _WIN32

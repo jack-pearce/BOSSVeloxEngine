@@ -4,6 +4,10 @@
 #include "velox/dwio/common/ReaderFactory.h"
 #include "velox/tpch/gen/TpchGen.h"
 
+using namespace facebook::velox;
+using namespace facebook::velox::exec;
+using namespace facebook::velox::exec::test;
+
 namespace facebook::velox::exec::test {
 
 namespace {
@@ -1964,6 +1968,60 @@ BossPlan BossQueryBuilder::getVeloxPlanBuilder(std::vector<FormExpr> veloxExprLi
   }
   context.plan = std::move(planPtr);
   context.dataFileFormat = format_;
+  return context;
+}
+
+BossPlan BossQueryBuilder::getVeloxPlanBuilderVector(std::vector<FormExpr> veloxExprList, RowVectorPtr data) {
+  BossPlan context;
+  core::PlanNodePtr planPtr;
+  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+  std::vector<core::PlanNodePtr> tableMapPlan;
+  std::unordered_map<std::string, int> joinMapPlan;
+  std::vector<std::string> outputLayout;
+  for (auto itExpr = veloxExprList.begin(); itExpr != veloxExprList.end(); ++itExpr) {
+    auto &veloxExpr = *itExpr;
+
+//        const auto selectedRowType = getRowType(veloxExpr.tableName, veloxExpr.selectedColumns);
+//        const auto &fileColumnNames = getFileColumnNames(veloxExpr.tableName);
+
+    core::PlanNodeId tablePlanNodeId;
+    auto plan = PlanBuilder(planNodeIdGenerator)
+            .values({data})
+            .filter(veloxExpr.fieldFiltersVec[0])
+            .capturePlanNodeId(tablePlanNodeId);
+
+    // list join first
+//        if (!veloxExpr.projectionsVec.empty()) {
+//          plan.project(veloxExpr.projectionsVec);
+//        }
+//        if (!veloxExpr.groupingKeysVec.empty() || !veloxExpr.aggregatesVec.empty()) {
+//          std::vector<std::string> aggregatesVec;
+//          veloxExpr.selectedColumns = veloxExpr.groupingKeysVec;
+//          for (auto itAggr = veloxExpr.aggregatesVec.begin(); itAggr != veloxExpr.aggregatesVec.end(); ++itAggr) {
+//            auto aggregation = *itAggr;
+//            auto tmp = fmt::format("{}({}) as {}", aggregation.op, aggregation.oldName, aggregation.newName);
+//            aggregatesVec.emplace_back(tmp);
+//            veloxExpr.selectedColumns.emplace_back(aggregation.newName);
+//          }
+//          plan.partialAggregation(veloxExpr.groupingKeysVec, aggregatesVec);
+//        }
+//        if (itExpr == veloxExprList.end() - 1) {
+//          plan.localPartition({});
+//          plan.finalAggregation();
+//        }
+//        if (!veloxExpr.orderByVec.empty()) {
+//          plan.orderBy(veloxExpr.orderByVec, false);
+//        }
+//        if (!veloxExpr.filter.empty()) {
+//          plan.filter(veloxExpr.filter);
+//        }
+//        if (veloxExpr.limit > 0) {
+//          plan.limit(0, veloxExpr.limit, false);
+//        }
+
+    planPtr = plan.planNode();
+  }
+  context.plan = std::move(planPtr);
   return context;
 }
 

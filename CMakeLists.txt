@@ -68,7 +68,7 @@ endif()
 
 #################################### Targets ####################################
 
-set(ImplementationFiles Source/BOSSVeloxEngine.cpp Source/BOSSQueryBuilder.cpp)
+set(ImplementationFiles Source/BOSSVeloxEngine.cpp Source/BOSSQueryBuilder.cpp Source/VectorBridge.cpp)
 
 if(MSVC)
   # not making any difference on Windows

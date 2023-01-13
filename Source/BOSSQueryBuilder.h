@@ -141,6 +141,7 @@ class BossQueryBuilder {
 
   BossPlan getVeloxPlanBuilder(std::vector<FormExpr> veloxExprList,
                                std::vector<std::unordered_map<std::string, std::string>> columnAliaseList);
+  BossPlan getVeloxPlanBuilderVector(std::vector<FormExpr> veloxExprList, RowVectorPtr data);
 
   std::vector<std::unordered_map<std::string, std::string>>
   getFileColumnNamesMap(std::vector<FormExpr> &veloxExprList);
