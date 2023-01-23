@@ -31,6 +31,16 @@ set(CMAKE_BUILD_TYPE "${CMAKE_BUILD_TYPE}" CACHE STRING
 set(VELOX_INCLUDE_DIRS /Users/sunny/Documents/velox)
 set(CMAKE_MODULE_PATH ${VELOX_INCLUDE_DIRS} ${CMAKE_MODULE_PATH})
 
+set(CMAKE_POSITION_INDEPENDENT_CODE TRUE) # make sure all dependent libraries are compiled with that option
+
+if(MSVC)
+  set(BOSS_LINK_LIBRARY_PREFIX ${CMAKE_LINK_LIBRARY_PREFIX})
+  set(BOSS_LINK_LIBRARY_SUFFIX ${CMAKE_LINK_LIBRARY_SUFFIX})
+else()
+  set(BOSS_LINK_LIBRARY_PREFIX ${CMAKE_SHARED_LIBRARY_PREFIX})
+  set(BOSS_LINK_LIBRARY_SUFFIX ${CMAKE_SHARED_LIBRARY_SUFFIX})
+endif(MSVC)
+
 include(ExternalProject)
 
 if(NOT DEFINED BOSS_BUILD_FROM_SOURCE)
@@ -72,7 +82,7 @@ endif()
 
 #################################### Targets ####################################
 
-set(ImplementationFiles Source/BOSSVeloxEngine.cpp Source/BOSSQueryBuilder.cpp Source/VectorBridge.cpp)
+set(ImplementationFiles Source/BOSSVeloxEngine.cpp Source/BOSSQueryBuilder.cpp)
 
 if(MSVC)
   # not making any difference on Windows
@@ -113,6 +123,7 @@ target_link_libraries(
         velox_serialization
         velox_encode
         velox_caching
+        velox_arrow_bridge
         ${FOLLY_WITH_DEPENDENCIES}
         ${FOLLY_BENCHMARK}
         ${FMT})

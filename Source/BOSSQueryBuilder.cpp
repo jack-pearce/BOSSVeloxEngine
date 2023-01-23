@@ -71,12 +71,12 @@ void BossQueryBuilder::initialize(const std::string& dataPath) {
       if (tableMetadata_[tableName].dataFiles.empty()) {
         dwio::common::ReaderOptions readerOptions;
         readerOptions.setFileFormat(format_);
+        auto input = std::make_unique<dwio::common::BufferedInput>(
+                std::make_shared<LocalReadFile>(dirEntry.path().string()),
+                readerOptions.getMemoryPool());
         std::unique_ptr<dwio::common::Reader> reader =
-            dwio::common::getReaderFactory(readerOptions.getFileFormat())
-                ->createReader(
-                    std::make_unique<dwio::common::FileInputStream>(
-                        dirEntry.path()),
-                    readerOptions);
+                dwio::common::getReaderFactory(readerOptions.getFileFormat())
+                        ->createReader(std::move(input), readerOptions);
         const auto fileType = reader->rowType();
         const auto fileColumnNames = fileType->names();
         // There can be extra columns in the file towards the end.
@@ -1345,7 +1345,8 @@ BossPlan BossQueryBuilder::getQ16Plan() const {
               supplier,
               "",
               {"ps_suppkey", "p_brand", "p_type", "p_size"},
-              core::JoinType::kNullAwareAnti)
+              core::JoinType::kAnti,
+              true /*nullAware*/)
           // Empty aggregate is used here to get the distinct count of
           // ps_suppkey.
           // approx_distinct could be used instead for getting the count of
@@ -1582,7 +1583,8 @@ BossPlan BossQueryBuilder::getQ22Plan() const {
               orders,
               "",
               {"c_acctbal", "c_phone"},
-              core::JoinType::kNullAwareAnti)
+              core::JoinType::kAnti,
+              true /*nullAware*/)
           .project({"substr(c_phone, 1, 2) AS country_code", "c_acctbal"})
           .partialAggregation(
               {"country_code"},

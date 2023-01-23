@@ -3,6 +3,17 @@
 #include "velox/common/memory/Memory.h"
 #include "velox/vector/BaseVector.h"
 
+/**
+ *     bool = 0, long = 1, double = 2 , ::std::string = 3, Symbol = 4 , ComplexExpression = 5
+ */
+enum BossType {
+    bBOOL = 0,
+    bBIGINT,
+    bDOUBLE,
+    bSTRING,
+    bDATE
+};
+
 /// These 2 definitions should be included by user from either
 struct BossSchema {
     // Array type description
@@ -18,30 +29,30 @@ struct BossSchema {
     void* private_data;
 };
 
-struct BossArray {
+struct VeloxArray {
     // Array data description
     int64_t length;
     int64_t null_count = 0;
     int64_t offset;
     int64_t n_children;
     const void* buffers;
-    struct BossArray** children;
+    struct VeloxArray** children;
 
     // Release callback
-    void (*release)(struct BossArray*);
+    void (*release)(struct VeloxArray*);
     // Opaque producer-specific data
     void* private_data;
 };
 
 namespace facebook::velox {
 
-/// Export a generic Velox Vector to an BossArray, as defined by Boss's C data
+/// Export a generic Velox Vector to an VeloxArray, as defined by Boss's C data
 ///
-/// The output BossArray needs to be allocated by the consumer (either in the
+/// The output VeloxArray needs to be allocated by the consumer (either in the
 /// heap or stack), and after usage, the standard REQUIRES the client to call
 /// the release() function (or memory will leak).
 ///
-/// After exporting, the BossArray will hold ownership to the underlying Vector
+/// After exporting, the VeloxArray will hold ownership to the underlying Vector
 /// being referenced, so the consumer does not need to explicitly hold on to the
 /// input Vector shared_ptr.
 ///
@@ -51,64 +62,24 @@ namespace facebook::velox {
 ///
 /// Example usage:
 ///
-///   BossArray bossArray;
-///   exportToBoss(inputVector, bossArray);
+///   VeloxArray veloxArray;
+///   exportToBoss(inputVector, veloxArray);
 ///   inputVector.reset(); // don't need to hold on to this shared_ptr.
 ///
-///   (use bossArray)
+///   (use veloxArray)
 ///
-///   bossArray.release(&bossArray);
+///   veloxArray.release(&veloxArray);
 ///
 void exportToBoss(
     const VectorPtr& vector,
-    BossArray& bossArray,
+    VeloxArray& veloxArray,
     memory::MemoryPool* pool =
         &velox::memory::getProcessDefaultMemoryManager().getRoot());
 
-/// Export the type of a Velox vector to an BossSchema.
+/// Import an VeloxArray and BossType into a Velox vector.
 ///
-/// The guidelines on API usage and memory management are the same as the ones
-/// described for the VectorPtr->BossArray export function.
-///
-/// The function throws in case there was no valid conversion available.
-///
-/// Example usage:
-///
-///   BossSchema bossSchema;
-///   exportToBoss(inputType, bossSchema);
-///   inputType.reset(); // don't need to hold on to this shared_ptr.
-///
-///   (use bossSchema)
-///
-///   bossSchema.release(&bossSchema);
-///
-/// NOTE: Since Boss couples type and encoding, we need both Velox type and
-/// actual data (containing encoding) to create an BossSchema.
-void exportToBoss(const VectorPtr&, BossSchema&);
-
-/// Import an BossSchema into a Velox Type object.
-///
-/// This function does the exact opposite of the function above. TypePtr carries
-/// all buffers they need to represent types, so after this function returns,
-/// the client is free to release any buffers associated with the input
-/// BossSchema object.
-///
-/// The function throws in case there was no valid conversion available.
-///
-/// Example usage:
-///
-///   BossSchema bossSchema;
-///   ... // fills bossSchema
-///   auto type = importFromBoss(bossSchema);
-///
-///   bossSchema.release(&bossSchema);
-///
-TypePtr importFromBoss(const BossSchema& bossSchema);
-
-/// Import an BossArray and BossSchema into a Velox vector.
-///
-/// This function takes both an BossArray (which contains the buffers) and an
-/// BossSchema (which describes the data type), since a Velox vector needs
+/// This function takes both an VeloxArray (which contains the buffers) and an
+/// BossType (which describes the data type), since a Velox vector needs
 /// both (buffer and type). A memory pool is also required, since all vectors
 /// carry a pointer to it, but not really used in most cases - unless the
 /// conversion itself requires a new allocation. In most cases no new
@@ -123,15 +94,15 @@ TypePtr importFromBoss(const BossSchema& bossSchema);
 ///
 /// Example usage:
 ///
-///   BossSchema bossSchema;
-///   BossArray bossArray;
+///   BossType bossType;
+///   VeloxArray veloxArray;
 ///   ... // fills structures
-///   auto vector = importFromBoss(bossSchema, bossArray, pool);
-///   ... // ensure buffers in bossArray remain alive while vector is used.
+///   auto vector = importFromBossAsViewer(bossType, veloxArray, pool);
+///   ... // ensure buffers in veloxArray remain alive while vector is used.
 ///
 VectorPtr importFromBossAsViewer(
-    const BossSchema& bossSchema,
-    const BossArray& bossArray,
+    BossType bossType,
+    const VeloxArray& veloxArray,
     memory::MemoryPool* pool =
         &velox::memory::getProcessDefaultMemoryManager().getRoot());
 

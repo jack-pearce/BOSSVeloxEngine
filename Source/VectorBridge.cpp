@@ -11,8 +11,8 @@ namespace facebook::velox {
 
 namespace {
 
-// Structure that will hold the buffers needed by BossArray. This is opaquely
-// carried by BossArray.private_data
+// Structure that will hold the buffers needed by VeloxArray. This is opaquely
+// carried by VeloxArray.private_data
 class VeloxToBossBridgeHolder {
  public:
 
@@ -27,24 +27,24 @@ class VeloxToBossBridgeHolder {
     return buffers_;
   }
 
-  // Allocates space for `numChildren` BossArray pointers.
+  // Allocates space for `numChildren` VeloxArray pointers.
   void resizeChildren(size_t numChildren) {
     childrenPtrs_.resize(numChildren);
     children_ = (numChildren > 0)
-        ? std::make_unique<BossArray*[]>(sizeof(BossArray*) * numChildren)
+        ? std::make_unique<VeloxArray*[]>(sizeof(VeloxArray*) * numChildren)
         : nullptr;
   }
 
-  // Allocates and properly acquires buffers for a child BossArray structure.
-  BossArray* allocateChild(size_t i) {
+  // Allocates and properly acquires buffers for a child VeloxArray structure.
+  VeloxArray* allocateChild(size_t i) {
     VELOX_CHECK_LT(i, childrenPtrs_.size());
-    childrenPtrs_[i] = std::make_unique<BossArray>();
+    childrenPtrs_[i] = std::make_unique<VeloxArray>();
     children_[i] = childrenPtrs_[i].get();
     return children_[i];
   }
 
-  // Returns the pointer to be used in the parent BossArray structure.
-  BossArray** getChildrenArrays() {
+  // Returns the pointer to be used in the parent VeloxArray structure.
+  VeloxArray** getChildrenArrays() {
     return children_.get();
   }
 
@@ -56,58 +56,25 @@ class VeloxToBossBridgeHolder {
   // above.
   BufferPtr bufferPtrs_;
 
-  // Auxiliary buffers to hold ownership over BossArray children structures.
-  std::vector<std::unique_ptr<BossArray>> childrenPtrs_;
+  // Auxiliary buffers to hold ownership over VeloxArray children structures.
+  std::vector<std::unique_ptr<VeloxArray>> childrenPtrs_;
 
   // Array that will hold pointers to the structures above - to be used by
-  // BossArray.children
-  std::unique_ptr<BossArray*[]> children_;
+  // VeloxArray.children
+  std::unique_ptr<VeloxArray*[]> children_;
 };
 
-// Structure that will hold buffers needed by BossSchema. This is opaquely
-// carried by BossSchema.private_data
-struct VeloxToBossSchemaBridgeHolder {
-  // Unfortunately, we need two vectors here since BossSchema takes a
-  // BossSchema** pointer for children (so we can't just cast the
-  // vector<unique_ptr<>>), but we also need a member to control the
-  // lifetime of the children objects. The following invariable should always
-  // hold:
-  //   childrenRaw[i] == childrenOwned[i].get()
-  std::vector<BossSchema*> childrenRaw;
-  std::vector<std::unique_ptr<BossSchema>> childrenOwned;
-
-  // If the input type is a RowType, we keep the shared_ptr alive so we can set
-  // BossSchema.name pointer to the internal string that contains the column
-  // name.
-  RowTypePtr rowType;
-
-  // Buffer required to generate a decimal format.
-  std::string formatBuffer;
-};
-
-void setUniqueChild(
-    std::unique_ptr<BossSchema>&& child,
-    VeloxToBossSchemaBridgeHolder& holder,
-    BossSchema& schema) {
-  holder.childrenOwned.resize(1);
-  holder.childrenRaw.resize(1);
-  holder.childrenOwned[0] = std::move(child);
-  schema.children = holder.childrenRaw.data();
-  schema.n_children = 1;
-  schema.children[0] = holder.childrenOwned[0].get();
-}
-
-// Release function for BossArray. Boss standard requires it to recurse down
+// Release function for VeloxArray. Boss standard requires it to recurse down
 // to children and dictionary arrays, and set release and private_data to null
 // to signal it has been released.
-static void bridgeRelease(BossArray* bossArray) {
-  if (!bossArray || !bossArray->release) {
+static void bridgeRelease(VeloxArray* veloxArray) {
+  if (!veloxArray || !veloxArray->release) {
     return;
   }
 
   // Recurse down to release children arrays.
-  for (int64_t i = 0; i < bossArray->n_children; ++i) {
-    BossArray* child = bossArray->children[i];
+  for (int64_t i = 0; i < veloxArray->n_children; ++i) {
+    VeloxArray* child = veloxArray->children[i];
     if (child != nullptr && child->release != nullptr) {
       child->release(child);
       VELOX_CHECK_NULL(child->release);
@@ -116,39 +83,12 @@ static void bridgeRelease(BossArray* bossArray) {
 
   // Destroy the current holder.
   auto* bridgeHolder =
-      static_cast<VeloxToBossBridgeHolder*>(bossArray->private_data);
+      static_cast<VeloxToBossBridgeHolder*>(veloxArray->private_data);
   delete bridgeHolder;
 
   // Finally, mark the array as released.
-  bossArray->release = nullptr;
-  bossArray->private_data = nullptr;
-}
-
-// Release function for BossSchema. Boss standard requires it to recurse down
-// to all children, and set release and private_data to null to signal it has
-// been released.
-static void bridgeSchemaRelease(BossSchema* bossSchema) {
-  if (!bossSchema || !bossSchema->release) {
-    return;
-  }
-
-  // Recurse down to release children arrays.
-  for (int64_t i = 0; i < bossSchema->n_children; ++i) {
-    BossSchema* child = bossSchema->children[i];
-    if (child != nullptr && child->release != nullptr) {
-      child->release(child);
-      VELOX_CHECK_NULL(child->release);
-    }
-  }
-
-  // Destroy the current holder.
-  auto* bridgeHolder =
-      static_cast<VeloxToBossSchemaBridgeHolder*>(bossSchema->private_data);
-  delete bridgeHolder;
-
-  // Finally, mark the array as released.
-  bossSchema->release = nullptr;
-  bossSchema->private_data = nullptr;
+  veloxArray->release = nullptr;
+  veloxArray->private_data = nullptr;
 }
 
 // Returns the Boss C data interface format type for a given Velox type.
@@ -201,7 +141,7 @@ const char* exportBossFormatStr(
       return "+s"; // struct
 
     default:
-      VELOX_NYI("Unable to map type '{}' to BossSchema.", type->kind());
+      VELOX_NYI("Unable to map type '{}' to BossType.", type->kind());
   }
 }
 
@@ -283,7 +223,7 @@ void gatherFromBuffer(
 void exportValues(
     const BaseVector& vec,
     const Selection& rows,
-    BossArray& out,
+    VeloxArray& out,
     memory::MemoryPool* pool,
     VeloxToBossBridgeHolder& holder) {
   // Short decimals need to be converted to 128 bit values as they are mapped
@@ -305,7 +245,7 @@ void exportValues(
 void exportFlat(
     const BaseVector& vec,
     const Selection& rows,
-    BossArray& out,
+    VeloxArray& out,
     memory::MemoryPool* pool,
     VeloxToBossBridgeHolder& holder) {
   out.n_children = 0;
@@ -332,13 +272,13 @@ void exportFlat(
 void exportBase(
     const BaseVector&,
     const Selection&,
-    BossArray&,
+    VeloxArray&,
     memory::MemoryPool*);
 
 void exportRows(
     const RowVector& vec,
     const Selection& rows,
-    BossArray& out,
+    VeloxArray& out,
     memory::MemoryPool* pool,
     VeloxToBossBridgeHolder& holder) {
   holder.resizeChildren(vec.childrenSize());
@@ -375,7 +315,7 @@ template <typename Vector>
 void exportOffsets(
     const Vector& vec,
     const Selection& rows,
-    BossArray& out,
+    VeloxArray& out,
     memory::MemoryPool* pool,
     VeloxToBossBridgeHolder& holder,
     Selection& childRows) {
@@ -408,7 +348,7 @@ void exportOffsets(
 void exportArrays(
     const ArrayVector& vec,
     const Selection& rows,
-    BossArray& out,
+    VeloxArray& out,
     memory::MemoryPool* pool,
     VeloxToBossBridgeHolder& holder) {
   Selection childRows(vec.elements()->size());
@@ -426,7 +366,7 @@ void exportArrays(
 void exportMaps(
     const MapVector& vec,
     const Selection& rows,
-    BossArray& out,
+    VeloxArray& out,
     memory::MemoryPool* pool,
     VeloxToBossBridgeHolder& holder) {
   RowVector child(
@@ -446,7 +386,7 @@ void exportMaps(
 void exportBase(
     const BaseVector& vec,
     const Selection& rows,
-    BossArray& out,
+    VeloxArray& out,
     memory::MemoryPool* pool) {
   auto holder = std::make_unique<VeloxToBossBridgeHolder>();
   out.buffers = holder->getBossBuffers();
@@ -496,102 +436,15 @@ const int64_t *exportToArray(
 
 void exportToBoss(
     const VectorPtr& vector,
-    BossArray& bossArray,
+    VeloxArray& veloxArray,
     memory::MemoryPool* pool) {
-  exportBase(*vector, Selection(vector->size()), bossArray, pool);
+  exportBase(*vector, Selection(vector->size()), veloxArray, pool);
 }
 
-void exportToBoss(const VectorPtr& vec, BossSchema& bossSchema) {
-  auto& type = vec->type();
+TypePtr importFromBossType(BossType &bossType) {
+  auto format = bossType;
 
-  bossSchema.name = nullptr;
-
-  // No additional metadata for now.
-  bossSchema.metadata = nullptr;
-
-  // Allocate private data buffer holder and recurse down to children types.
-  auto bridgeHolder = std::make_unique<VeloxToBossSchemaBridgeHolder>();
-
-  if (type->kind() == TypeKind::MAP) {
-    // Need to wrap the key and value types in a struct type.
-    VELOX_DCHECK_EQ(type->size(), 2);
-    auto child = std::make_unique<BossSchema>();
-    auto& maps = *vec->asUnchecked<MapVector>();
-    auto rows = std::make_shared<RowVector>(
-        nullptr,
-        ROW({"key", "value"}, {type->childAt(0), type->childAt(1)}),
-        nullptr,
-        0,
-        std::vector<VectorPtr>{maps.mapKeys(), maps.mapValues()},
-        maps.getNullCount());
-    exportToBoss(rows, *child);
-    child->name = "entries";
-    setUniqueChild(std::move(child), *bridgeHolder, bossSchema);
-
-  } else if (type->kind() == TypeKind::ARRAY) {
-    auto child = std::make_unique<BossSchema>();
-    auto& arrays = *vec->asUnchecked<ArrayVector>();
-    exportToBoss(arrays.elements(), *child);
-    // Name is required, and "item" is the default name used in boss itself.
-    child->name = "item";
-    setUniqueChild(std::move(child), *bridgeHolder, bossSchema);
-
-  } else if (type->kind() == TypeKind::ROW) {
-    auto& rows = *vec->asUnchecked<RowVector>();
-    auto numChildren = rows.childrenSize();
-    bridgeHolder->childrenRaw.resize(numChildren);
-    bridgeHolder->childrenOwned.resize(numChildren);
-
-    // Hold the shared_ptr so we can set the BossSchema.name pointer to its
-    // internal `name` string.
-    bridgeHolder->rowType = std::static_pointer_cast<const RowType>(type);
-
-    bossSchema.children = bridgeHolder->childrenRaw.data();
-    bossSchema.n_children = numChildren;
-
-    for (size_t i = 0; i < numChildren; ++i) {
-      // Recurse down the children. We use the same trick of temporarily
-      // holding the buffer in a unique_ptr so it doesn't leak if the
-      // recursion throws.
-      //
-      // But this is more nuanced: for types with a list of children (like
-      // row/structs), if one of the children throws, we need to make sure we
-      // call release() on the children that have already been created before
-      // we re-throw the exception back to the client, or memory will leak.
-      // This is needed because Boss doesn't define what the client needs to
-      // do if the conversion fails, so we can't expect the client to call the
-      // release() method.
-      try {
-        auto& currentSchema = bridgeHolder->childrenOwned[i];
-        currentSchema = std::make_unique<BossSchema>();
-        exportToBoss(rows.childAt(i), *currentSchema);
-        currentSchema->name = bridgeHolder->rowType->nameOf(i).data();
-        bossSchema.children[i] = currentSchema.get();
-      } catch (const VeloxException& e) {
-        // Release any children that have already been built before
-        // re-throwing the exception back to the client.
-        for (size_t j = 0; j < i; ++j) {
-          bossSchema.children[j]->release(bossSchema.children[j]);
-        }
-        throw;
-      }
-    }
-
-  } else {
-    VELOX_DCHECK_EQ(type->size(), 0);
-    bossSchema.n_children = 0;
-    bossSchema.children = nullptr;
-  }
-
-  // Set release callback.
-  bossSchema.release = bridgeSchemaRelease;
-  bossSchema.private_data = bridgeHolder.release();
-}
-
-TypePtr importFromBoss(const BossSchema& bossSchema) {
-  auto format = bossSchema.format;
-
-  switch (format) {
+  switch (bossType) {
     case 0:
       return BOOLEAN();
     case 1:
@@ -605,29 +458,26 @@ TypePtr importFromBoss(const BossSchema& bossSchema) {
       break;
   }
   VELOX_USER_FAIL(
-      "Unable to convert '{}' BossSchema format type to Velox.", format);
+          "Unable to convert '{}' BossType format type to Velox.", format);
 }
 
 namespace {
-// Optionally, holds shared_ptrs pointing to the BossArray object that
-// holds the buffer and the BossSchema object that describes the BossArray,
+// Optionally, holds shared_ptrs pointing to the VeloxArray object that
+// holds the buffer object that describes the VeloxArray,
 // which will be released to signal that we will no longer hold on to the data
 // and the shared_ptr deleters should run the release procedures if no one
 // else is referencing the objects.
 struct BufferViewReleaser {
-  BufferViewReleaser() : BufferViewReleaser(nullptr, nullptr) {}
-  BufferViewReleaser(
-      std::shared_ptr<BossSchema> bossSchema,
-      std::shared_ptr<BossArray> bossArray)
-      : schemaReleaser_(std::move(bossSchema)),
-        arrayReleaser_(std::move(bossArray)) {}
+  BufferViewReleaser() : BufferViewReleaser(nullptr) {}
+  explicit BufferViewReleaser(
+      std::shared_ptr<VeloxArray> veloxArray)
+      : arrayReleaser_(std::move(veloxArray)) {}
 
   void addRef() const {}
   void release() const {}
 
  private:
-  const std::shared_ptr<BossSchema> schemaReleaser_;
-  const std::shared_ptr<BossArray> arrayReleaser_;
+  const std::shared_ptr<VeloxArray> arrayReleaser_;
 };
 
 // Wraps a naked pointer using a Velox buffer view, without copying it. Adding a
@@ -669,36 +519,9 @@ using WrapInBufferViewFunc =
     std::function<BufferPtr(const void* buffer, size_t length)>;
 
 VectorPtr importFromBossImpl(
-    BossSchema& bossSchema,
-    BossArray& bossArray,
-    memory::MemoryPool* pool,
-    bool isViewer);
-
-RowVectorPtr createRowVector(
-    memory::MemoryPool* pool,
-    const RowTypePtr& rowType,
-    BufferPtr nulls,
-    const BossSchema& bossSchema,
-    const BossArray& bossArray,
-    bool isViewer) {
-  VELOX_CHECK_EQ(bossArray.n_children, rowType->size());
-
-  // Recursively create the children vectors.
-  std::vector<VectorPtr> childrenVector;
-  childrenVector.reserve(bossArray.n_children);
-
-  for (size_t i = 0; i < bossArray.n_children; ++i) {
-    childrenVector.push_back(importFromBossImpl(
-        *bossSchema.children[i], *bossArray.children[i], pool, isViewer));
-  }
-  return std::make_shared<RowVector>(
-      pool,
-      rowType,
-      nulls,
-      bossArray.length,
-      std::move(childrenVector),
-      optionalNullCount(bossArray.null_count));
-}
+    BossType bossType,
+    VeloxArray& veloxArray,
+    memory::MemoryPool* pool);
 
 BufferPtr computeSizes(
     const vector_size_t* offsets,
@@ -713,69 +536,25 @@ BufferPtr computeSizes(
   return sizesBuf;
 }
 
-ArrayVectorPtr createArrayVector(
-    memory::MemoryPool* pool,
-    const TypePtr& type,
-    BufferPtr nulls,
-    const BossSchema& bossSchema,
-    const BossArray& bossArray,
-    bool isViewer,
-    WrapInBufferViewFunc wrapInBufferView) {
-  static_assert(sizeof(vector_size_t) == sizeof(int32_t));
-  VELOX_CHECK_EQ(bossArray.n_children, 1);
-  auto offsets = wrapInBufferView(
-      bossArray.buffers, (bossArray.length + 1) * sizeof(vector_size_t));
-  auto sizes =
-      computeSizes(offsets->as<vector_size_t>(), bossArray.length, pool);
-  auto elements = importFromBossImpl(
-      *bossSchema.children[0], *bossArray.children[0], pool, isViewer);
-  return std::make_shared<ArrayVector>(
-      pool,
-      type,
-      std::move(nulls),
-      bossArray.length,
-      std::move(offsets),
-      std::move(sizes),
-      std::move(elements),
-      optionalNullCount(bossArray.null_count));
-}
-
 VectorPtr importFromBossImpl(
-    BossSchema& bossSchema,
-    BossArray& bossArray,
+    BossType bossType,
+    VeloxArray& veloxArray,
     memory::MemoryPool* pool,
-    bool isViewer,
     WrapInBufferViewFunc wrapInBufferView) {
-  VELOX_USER_CHECK_NOT_NULL(bossSchema.release, "bossSchema was released.");
-  VELOX_USER_CHECK_NOT_NULL(bossArray.release, "bossArray was released.");
+  VELOX_USER_CHECK_NOT_NULL(veloxArray.release, "veloxArray was released.");
   VELOX_USER_CHECK_EQ(
-      bossArray.offset,
+      veloxArray.offset,
       0,
       "Offsets are not supported during boss conversion yet.");
   VELOX_CHECK_GE(
-      bossArray.length, 0, "Array length needs to be non-negative.");
+      veloxArray.length, 0, "Array length needs to be non-negative.");
 
   // First parse and generate a Velox type.
-  auto type = importFromBoss(bossSchema);
+  auto type = importFromBossType(bossType);
 
   // Wrap the nulls buffer into a Velox BufferView (zero-copy). Null buffer size
   // needs to be at least one bit per element.
   BufferPtr nulls = nullptr;
-
-  // Row/structs.
-  if (type->isRow()) {
-    return createRowVector(
-        pool,
-        std::dynamic_pointer_cast<const RowType>(type),
-        nulls,
-        bossSchema,
-        bossArray,
-        isViewer);
-  }
-  if (type->isArray()) {
-    return createArrayVector(
-        pool, type, nulls, bossSchema, bossArray, isViewer, wrapInBufferView);
-  }
 
   // Other primitive types.
   VELOX_CHECK(
@@ -785,7 +564,7 @@ VectorPtr importFromBossImpl(
 
   // Wrap the values buffer into a Velox BufferView - zero-copy.
   auto values = wrapInBufferView(
-      bossArray.buffers, bossArray.length * type->cppSizeInBytes());
+      veloxArray.buffers, veloxArray.length * type->cppSizeInBytes());
 
   return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
       createFlatVector,
@@ -793,31 +572,29 @@ VectorPtr importFromBossImpl(
       pool,
       type,
       nulls,
-      bossArray.length,
+      veloxArray.length,
       values,
-      bossArray.null_count);
+      veloxArray.null_count);
 }
 
 VectorPtr importFromBossImpl(
-    BossSchema& bossSchema,
-    BossArray& bossArray,
-    memory::MemoryPool* pool,
-    bool isViewer) {
+        BossType bossType,
+        VeloxArray &veloxArray,
+        memory::MemoryPool *pool) {
   return importFromBossImpl(
-          bossSchema, bossArray, pool, isViewer, wrapInBufferViewAsViewer);
+          bossType, veloxArray, pool, wrapInBufferViewAsViewer);
 }
 
 } // namespace
 
 VectorPtr importFromBossAsViewer(
-        const BossSchema &bossSchema,
-        const BossArray &bossArray,
+        BossType bossType,
+        const VeloxArray &veloxArray,
         memory::MemoryPool *pool) {
   return importFromBossImpl(
-          const_cast<BossSchema &>(bossSchema),
-          const_cast<BossArray &>(bossArray),
-          pool,
-          true);
+          bossType,
+          const_cast<VeloxArray &>(veloxArray),
+          pool);
 }
 
 //template<typename T>
