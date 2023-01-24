@@ -15,8 +15,8 @@ __declspec(dllexport) void reset();
 namespace boss::engines::velox {
 
 class Engine {
+
 public:
-    Engine();
 
     Engine(Engine &) = delete;
 
@@ -26,14 +26,14 @@ public:
 
     Engine &operator=(Engine &&) = delete;
 
-//  Engine() = default;
+    Engine() = default;
+
     ~Engine() = default;
 
-  boss::Expression evaluate(boss::Expression&& e);
+    boss::Expression evaluate(boss::Expression &&e);
 
 private:
-  bool memoryMapped = true;
-  std::unordered_map<std::string, boss::ComplexExpression> tables;
+    std::unordered_map<std::string, boss::ComplexExpression> tables;
 
 };
 
