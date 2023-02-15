@@ -1,197 +1,128 @@
 #pragma once
 
-#include "velox/dwio/common/Options.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
+#include "velox/exec/tests/utils/OperatorTestBase.h"
 
-namespace facebook::velox::exec::test {
+//#define DebugInfo
+using namespace facebook::velox;
+using namespace facebook::velox::core;
+using namespace facebook::velox::exec;
+using namespace facebook::velox::exec::test;
 
-enum ColumnType { cName, cValue };
-struct AtomicExpr {
-  enum ColumnType type;
-  std::string data;
-};
+namespace boss::engines::velox {
+    /**
+ *     bool = 0, long = 1, double = 2 , ::std::string = 3, Symbol = 4
+ */
+    enum BossType {
+        bBOOL = 0,
+        bBIGINT,
+        bDOUBLE,
+        bSTRING
+    };
 
-struct FiledFilter {
-  std::string opName;
-  std::vector<AtomicExpr> element;
-  void clear() {
-    opName.clear();
-    element.clear();
-  }
-};
+    struct BossArray {
+        // Array data description
+        int64_t length;
+        const void *buffers;
 
-struct JoinPair {
-    std::string leftKey;
-    std::string rightKey;
-};
+        // Release callback
+        void (*release)(struct BossArray *);
+    };
 
-struct aggrPair {
-  std::string op;
-  std::string oldName;
-  std::string newName;
-};
+    enum ColumnType {
+        cName, cValue
+    };
 
-struct JoinPairList {
-  bool leftFlag = false;
-  std::vector<std::string> leftKeys;
-  std::vector<std::string> rightKeys;
-  void clear() {
-    leftFlag = false;
-    leftKeys.clear();
-    rightKeys.clear();
-  }
-};
+    struct AtomicExpr {
+        enum ColumnType type;
+        std::string data;
+    };
 
-struct FormExpr {
-  int32_t limit = 0;
-  bool orderBy = false;
-  std::string tableName;
-  std::vector<std::string> selectedColumns;
-  std::vector<FiledFilter> tmpFieldFiltersVec;
-  std::vector<std::string> fieldFiltersVec;
-  std::string remainingFilter;
-  std::vector<std::string> projectionsVec;
-  std::vector<std::string> groupingKeysVec;
-  std::vector<aggrPair> aggregatesVec;
-  std::vector<std::string> orderByVec;
-  std::vector<JoinPair> hashJoinVec;
-  std::vector<JoinPairList> hashJoinListVec;
-  std::string filter;  // can be used to filter non-field clause
+    struct FiledFilter {
+        std::string opName;
+        std::vector<AtomicExpr> element;
 
-  void clear() {
-    limit = 0;
-    orderBy = false;
-    tableName.clear();
-    selectedColumns.clear();
-    tmpFieldFiltersVec.clear();
-    fieldFiltersVec.clear();
-    remainingFilter.clear();
-    projectionsVec.clear();
-    groupingKeysVec.clear();
-    aggregatesVec.clear();
-    orderByVec.clear();
-    hashJoinVec.clear();
-    hashJoinListVec.clear();
-    filter.clear();
-  }
-};
+        void clear() {
+          opName.clear();
+          element.clear();
+        }
+    };
 
-/// Contains the query plan and input data files keyed on source plan node ID.
-/// All data files use the same file format specified in 'dataFileFormat'.
-struct BossPlan {
-  core::PlanNodePtr plan;
-  std::unordered_map<core::PlanNodeId, std::vector<std::string>> dataFiles;
-  dwio::common::FileFormat dataFileFormat;
-};
+    struct JoinPair {
+        std::string leftKey;
+        std::string rightKey;
+    };
 
-/// Contains type information, data files, and file column names for a table.
-/// This information is inferred from the input data files.
-/// The type names are mapped to the standard names.
-/// Example: If the file has a 'returnflag' column, the corresponding type name
-/// will be 'l_returnflag'. fileColumnNames store the mapping between standard
-/// names and the corresponding name in the file.
-struct BossTableMetadata {
-  RowTypePtr type;
-  std::vector<std::string> dataFiles;
-  std::unordered_map<std::string, std::string> fileColumnNames;
-};
+    struct aggrPair {
+        std::string op;
+        std::string oldName;
+        std::string newName;
+    };
 
-/// Builds TPC-H queries using TPC-H data files located in the specified
-/// directory. Each table data must be placed in hive-style partitioning. That
-/// is, the top-level directory is expected to contain a sub-directory per table
-/// name and the name of the sub-directory must match the table name. Example:
-/// ls -R data/
-///  customer   lineitem
-///
-///  data/customer:
-///  customer1.parquet  customer2.parquet
-///
-///  data/lineitem:
-///  lineitem1.parquet  lineitem2.parquet  lineitem3.parquet
+    struct JoinPairList {
+        bool leftFlag = false;
+        std::vector<std::string> leftKeys;
+        std::vector<std::string> rightKeys;
 
-/// The column names can vary. Additional columns may exist towards the end.
-/// The class uses standard names (example: l_returnflag) to build TPC-H plans.
-/// Since the column names in the file can vary, they are mapped to the standard
-/// names. Therefore, the order of the columns in the file is important and
-/// should be in the same order as in the TPC-H standard.
-class BossQueryBuilder {
- public:
-  explicit BossQueryBuilder(dwio::common::FileFormat format)
-      : format_(format) {}
+        void clear() {
+          leftFlag = false;
+          leftKeys.clear();
+          rightKeys.clear();
+        }
+    };
 
-  /// Read each data file, initialize row types, and determine data paths for
-  /// each table.
-  /// @param dataPath path to the data files
-  void initialize(const std::string& dataPath);
+    struct FormExpr {
+        int32_t limit = 0;
+        bool orderBy = false;
+        std::string tableName;
+        std::vector<std::string> selectedColumns;
+        std::vector<FiledFilter> tmpFieldFiltersVec;
+        std::vector<std::string> fieldFiltersVec;
+        std::string remainingFilter;
+        std::vector<std::string> projectionsVec;
+        std::vector<std::string> groupingKeysVec;
+        std::vector<aggrPair> aggregatesVec;
+        std::vector<std::string> orderByVec;
+        std::vector<JoinPair> hashJoinVec;
+        std::vector<JoinPairList> hashJoinListVec;
+        std::string filter;  // can be used to filter non-field clause
+        RowVectorPtr rowData;
+        std::unordered_map<std::string, TypePtr> fileColumnNamesMap;
 
-  /// Get the query plan for a given TPC-H query number.
-  /// @param queryId TPC-H query number
-  BossPlan getQueryPlan(int queryId) const;
+        void clear() {
+          limit = 0;
+          orderBy = false;
+          tableName.clear();
+          selectedColumns.clear();
+          tmpFieldFiltersVec.clear();
+          fieldFiltersVec.clear();
+          remainingFilter.clear();
+          projectionsVec.clear();
+          groupingKeysVec.clear();
+          aggregatesVec.clear();
+          orderByVec.clear();
+          hashJoinVec.clear();
+          hashJoinListVec.clear();
+          filter.clear();
+        }
+    };
 
-  /// Get the TPC-H table names present.
-  static const std::vector<std::string>& getTableNames();
+    VectorPtr importFromBossAsViewer(BossType bossType, const BossArray &bossArray, memory::MemoryPool *pool);
 
-  const std::unordered_map<std::string, std::string>& getFileColumnNames(
-          const std::string& tableName) const {
-    return tableMetadata_.at(tableName).fileColumnNames;
-  }
+    BossArray makeBossArray(const void *buffers, int64_t length);
 
-  void reformVeloxExpr(std::vector<FormExpr> &veloxExprList,
-                       std::vector<std::unordered_map<std::string, std::string>> columnAliaseList);
+    std::vector<std::unordered_map<std::string, TypePtr>> getFileColumnNamesMap(
+            std::vector<FormExpr> &veloxExprList);
 
-  BossPlan getVeloxPlanBuilder(std::vector<FormExpr> veloxExprList,
-                               std::vector<std::unordered_map<std::string, std::string>> columnAliaseList);
-  BossPlan getVeloxPlanBuilderVector(std::vector<FormExpr> veloxExprList, RowVectorPtr data);
+    std::vector<RowVectorPtr> getVeloxPlanBuilder(
+            std::vector<FormExpr> veloxExprList,
+            std::vector<std::unordered_map<std::string, TypePtr>> columnAliaseList,
+            std::unique_ptr<TaskCursor> &taskCursor);
 
-  std::vector<std::unordered_map<std::string, std::string>>
-  getFileColumnNamesMap(std::vector<FormExpr> &veloxExprList);
+    void printResults(const std::vector<RowVectorPtr> &results);
 
- private:
-  BossPlan getQ1Plan() const;
-  BossPlan getQ3Plan() const;
-  BossPlan getQ5Plan() const;
-  BossPlan getQ6Plan() const;
-  BossPlan getQ7Plan() const;
-  BossPlan getQ8Plan() const;
-  BossPlan getQ9Plan() const;
-  BossPlan getQ10Plan() const;
-  BossPlan getQ12Plan() const;
-  BossPlan getQ13Plan() const;
-  BossPlan getQ14Plan() const;
-  BossPlan getQ15Plan() const;
-  BossPlan getQ16Plan() const;
-  BossPlan getQ18Plan() const;
-  BossPlan getQ19Plan() const;
-  BossPlan getQ22Plan() const;
+    RowVectorPtr makeRowVector(std::vector<std::string> childNames, std::vector<VectorPtr> children);
 
-  const std::vector<std::string>& getTableFilePaths(
-      const std::string& tableName) const {
-    return tableMetadata_.at(tableName).dataFiles;
-  }
+    extern std::shared_ptr<memory::MemoryPool> pool_;
 
-  std::shared_ptr<const RowType> getRowType(
-      const std::string& tableName,
-      const std::vector<std::string>& columnNames) const {
-    auto columnSelector = std::make_shared<dwio::common::ColumnSelector>(
-        tableMetadata_.at(tableName).type, columnNames);
-    return columnSelector->buildSelectedReordered();
-  }
-
-  std::unordered_map<std::string, BossTableMetadata> tableMetadata_;
-  const dwio::common::FileFormat format_;
-  static const std::unordered_map<std::string, std::vector<std::string>>
-      kTables_;
-  static const std::vector<std::string> kTableNames_;
-
-  static constexpr const char* kLineitem = "lineitem";
-  static constexpr const char* kCustomer = "customer";
-  static constexpr const char* kOrders = "orders";
-  static constexpr const char* kNation = "nation";
-  static constexpr const char* kRegion = "region";
-  static constexpr const char* kPart = "part";
-  static constexpr const char* kSupplier = "supplier";
-  static constexpr const char* kPartsupp = "partsupp";
-  std::shared_ptr<memory::MemoryPool> pool_ = memory::getDefaultMemoryPool();
-};
-
-} // namespace facebook::velox::exec::test
+} // namespace boss::engines::velox

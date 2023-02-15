@@ -1,8 +1,8 @@
 #pragma once
 
+#include "BOSSQueryBuilder.h"
 #include <BOSS.hpp>
 #include <Expression.hpp>
-
 #include <unordered_map>
 
 #ifdef _WIN32
@@ -14,27 +14,26 @@ __declspec(dllexport) void reset();
 
 namespace boss::engines::velox {
 
-class Engine {
+    class Engine {
 
-public:
+    public:
 
-    Engine(Engine &) = delete;
+        Engine(Engine &) = delete;
 
-    Engine &operator=(Engine &) = delete;
+        Engine &operator=(Engine &) = delete;
 
-    Engine(Engine &&) = default;
+        Engine(Engine &&) = default;
 
-    Engine &operator=(Engine &&) = delete;
+        Engine &operator=(Engine &&) = delete;
 
-    Engine() = default;
+        Engine() = default;
 
-    ~Engine() = default;
+        ~Engine() = default;
 
-    boss::Expression evaluate(boss::Expression &&e);
+        boss::Expression evaluate(boss::Expression &&e);
 
-private:
-    std::unordered_map<std::string, boss::ComplexExpression> tables;
+    private:
 
-};
+    };
 
 } // namespace boss::engines::velox

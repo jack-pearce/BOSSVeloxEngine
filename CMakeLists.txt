@@ -23,6 +23,7 @@ mark_as_advanced(
   CMAKE_C_FLAGS_SANITIZE		  CMAKE_SHARED_LINKER_FLAGS_SANITIZE
   )
 
+#set(CMAKE_BUILD_TYPE Sanitize)
 set(CMAKE_BUILD_TYPE "${CMAKE_BUILD_TYPE}" CACHE STRING
   "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel Sanitize."
   FORCE)
@@ -43,46 +44,49 @@ endif(MSVC)
 
 include(ExternalProject)
 
-if(NOT DEFINED BOSS_BUILD_FROM_SOURCE)
-    set(BOSS_BUILD_FROM_SOURCE ON CACHE BOOL "should boss core be built from source rather than downloading a pre-built release")
+# Core BOSS
+if(NOT DEFINED BUILD_BOSS_FROM_SOURCE)
+  set(BUILD_BOSS_FROM_SOURCE ON)
 endif()
-if(BOSS_BUILD_FROM_SOURCE)
+if(BUILD_BOSS_FROM_SOURCE)
   if(NOT DEFINED BOSS_SOURCE_BRANCH)
-    set(BOSS_SOURCE_BRANCH v0.3 CACHE STRING "if boss core is built from source, which thread should be fetched")
+    set(BOSS_SOURCE_BRANCH main)
   endif()
   if(NOT DEFINED BOSS_SOURCE_REPOSITORY)
     if(NOT GITHUB_TOKEN)
-      if(DEFINED ENV{GITHUB_TOKEN})
-        set(GITHUB_TOKEN $ENV{GITHUB_TOKEN})
-      endif()
-    endif()
-    if(NOT GITHUB_TOKEN)
-      message( FATAL_ERROR "You need to pass -DGITHUB_TOKEN=... to pass a github token to fetch the boss release, alternatively, specify -DBOSS_SOURCE_REPOSITORY to use an alternative repository" )
+      message( FATAL_ERROR "You need to pass -DGITHUB_TOKEN=... to pass a github token to fetch the boss release" )
     endif()
     set(BOSS_SOURCE_REPOSITORY https://little-big-h:${GITHUB_TOKEN}@github.com/symbol-store/BOSS.git)
   endif()
-  message("getting boss sources from ${BOSS_SOURCE_REPOSITORY} branch ${BOSS_SOURCE_BRANCH}")
+  message("getting boss sources from ${BOSS_SOURCE_REPOSITORY}")
   ExternalProject_Add(BOSS
-    GIT_REPOSITORY ${BOSS_SOURCE_REPOSITORY}
-    GIT_TAG ${BOSS_SOURCE_BRANCH}
-    CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=${BOSSVeloxEngine_BINARY_DIR}/deps $<IF:$<CONFIG:>,,-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}> -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}  -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER} -DCMAKE_CXX_FLAGS=${DCMAKE_CXX_FLAGS}
-    )
+          GIT_REPOSITORY ${BOSS_SOURCE_REPOSITORY}
+          GIT_TAG ${BOSS_SOURCE_BRANCH}
+          GIT_SHALLOW ON
+          DOWNLOAD_DIR $ENV{HOME}/.cmake-downloads/${CMAKE_PROJECT_NAME}
+          CMAKE_ARGS -DCMAKE_VERBOSE_MAKEFILE=${CMAKE_VERBOSE_MAKEFILE} -DCMAKE_INSTALL_PREFIX=${BOSSVeloxEngine_BINARY_DIR}/deps $<IF:$<CONFIG:>,,-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}>
+          -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}  -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER} -DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}
+          BUILD_BYPRODUCTS ${BOSSVeloxEngine_BINARY_DIR}/deps/lib/${BOSS_LINK_LIBRARY_PREFIX}BOSS${BOSS_LINK_LIBRARY_SUFFIX}
+          )
 else()
   ExternalProject_Add(BOSS
-    URL https://api.github.com/repos/symbol-store/BOSS/releases/assets/48287799
-    HTTP_HEADER "Authorization: token ${GITHUB_TOKEN}" "Accept: application/octet-stream"
-    DOWNLOAD_DIR $ENV{HOME}/.cmake-downloads
-    SOURCE_DIR ${BOSSVeloxEngine_BINARY_DIR}/deps
-    CONFIGURE_COMMAND ""
-    BUILD_COMMAND ""
-    INSTALL_COMMAND ""
-  )
+          URL https://api.github.com/repos/symbol-store/BOSS/releases/assets/48287799
+          HTTP_HEADER "Authorization: token ${GITHUB_TOKEN}" "Accept: application/octet-stream"
+          DOWNLOAD_DIR $ENV{HOME}/.cmake-downloads/${CMAKE_PROJECT_NAME}
+          SOURCE_DIR ${BOSSVeloxEngine_BINARY_DIR}/deps
+          CONFIGURE_COMMAND ""
+          BUILD_COMMAND ""
+          INSTALL_COMMAND ""
+          BUILD_BYPRODUCTS ${BOSSVeloxEngine_BINARY_DIR}/deps/lib/${BOSS_LINK_LIBRARY_PREFIX}BOSS${BOSS_LINK_LIBRARY_SUFFIX}
+          )
 endif()
 
 
 #################################### Targets ####################################
 
-set(ImplementationFiles Source/BOSSVeloxEngine.cpp Source/BOSSQueryBuilder.cpp)
+set(ImplementationFiles Source/BOSSVeloxEngine.cpp Source/BOSSQueryBuilder.cpp
+        ${VELOX_INCLUDE_DIRS}/velox/exec/tests/utils/PlanBuilder.cpp
+        ${VELOX_INCLUDE_DIRS}/velox/exec/tests/utils/Cursor.cpp)
 
 if(MSVC)
   # not making any difference on Windows
@@ -105,29 +109,20 @@ add_subdirectory(${VELOX_INCLUDE_DIRS} velox)
 target_link_libraries(
         BOSSVeloxEngine
         velox_aggregates
-        velox_type
-        velox_vector
-        velox_vector_test_lib
-        velox_exec
-        velox_exec_test_lib
-        velox_tpch_connector
-        velox_memory
-        velox_dwio_common
-        velox_dwio_common_exception
-        velox_dwio_parquet_reader
-        velox_dwio_type_fbhive
-        velox_dwio_common_test_utils
-        velox_hive_connector
-        velox_exception
-        velox_process
-        velox_serialization
-        velox_encode
-        velox_caching
-        velox_arrow_bridge
-        ${FOLLY_WITH_DEPENDENCIES}
-        ${FOLLY_BENCHMARK}
-        ${FMT})
-
+#        velox_type
+#        velox_exec
+        velox_functions_prestosql
+#        velox_expression
+        velox_parse_parser
+#        velox_exception
+#        velox_process
+#        velox_serialization
+#        velox_encode
+#        velox_caching
+#        ${FOLLY_WITH_DEPENDENCIES}
+#        ${FOLLY_BENCHMARK}
+#        ${FMT})
+)
 target_compile_options(BOSSVeloxEngine SYSTEM PUBLIC -DARROW_STATIC -msse4.2)
 if (UNIX AND NOT APPLE)
   target_link_libraries(BOSSVeloxEngine uuid)
