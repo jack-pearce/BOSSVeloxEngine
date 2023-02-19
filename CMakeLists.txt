@@ -23,14 +23,15 @@ mark_as_advanced(
   CMAKE_C_FLAGS_SANITIZE		  CMAKE_SHARED_LINKER_FLAGS_SANITIZE
   )
 
-#set(CMAKE_BUILD_TYPE Sanitize)
 set(CMAKE_BUILD_TYPE "${CMAKE_BUILD_TYPE}" CACHE STRING
   "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel Sanitize."
   FORCE)
 
 ############################### External Projects ###############################
-set(VELOX_INCLUDE_DIRS /Users/sunny/Documents/velox)
-set(CMAKE_MODULE_PATH ${VELOX_INCLUDE_DIRS} ${CMAKE_MODULE_PATH})
+if(NOT VELOX_DIRS)
+  message( FATAL_ERROR "You need to pre-build Velox Project and set VELOX_DIRS" )
+endif()
+set(CMAKE_MODULE_PATH ${VELOX_DIRS} ${CMAKE_MODULE_PATH})
 
 set(CMAKE_POSITION_INDEPENDENT_CODE TRUE) # make sure all dependent libraries are compiled with that option
 
@@ -85,8 +86,8 @@ endif()
 #################################### Targets ####################################
 
 set(ImplementationFiles Source/BOSSVeloxEngine.cpp Source/BOSSQueryBuilder.cpp
-        ${VELOX_INCLUDE_DIRS}/velox/exec/tests/utils/PlanBuilder.cpp
-        ${VELOX_INCLUDE_DIRS}/velox/exec/tests/utils/Cursor.cpp)
+        ${VELOX_DIRS}/velox/exec/tests/utils/PlanBuilder.cpp
+        ${VELOX_DIRS}/velox/exec/tests/utils/Cursor.cpp)
 
 if(MSVC)
   # not making any difference on Windows
@@ -99,29 +100,19 @@ endif(MSVC)
 add_library(BOSSVeloxEngine ${LibraryType} ${ImplementationFiles})
 
 target_include_directories(BOSSVeloxEngine PUBLIC
-        ${VELOX_INCLUDE_DIRS}
-        ${VELOX_INCLUDE_DIRS}/velox/
-        ${VELOX_INCLUDE_DIRS}/velox/external/xxhash/
-        ${VELOX_INCLUDE_DIRS}/third_party/
-        ${VELOX_INCLUDE_DIRS}/third_party/xsimd/
-        ${VELOX_INCLUDE_DIRS}/third_party/xsimd/include/)
-add_subdirectory(${VELOX_INCLUDE_DIRS} velox)
+        ${VELOX_DIRS}
+        ${VELOX_DIRS}/velox/
+        ${VELOX_DIRS}/velox/external/xxhash/
+        ${VELOX_DIRS}/third_party/
+        ${VELOX_DIRS}/third_party/xsimd/
+        ${VELOX_DIRS}/third_party/xsimd/include/)
+add_subdirectory(${VELOX_DIRS} velox)
 target_link_libraries(
         BOSSVeloxEngine
         velox_aggregates
-#        velox_type
-#        velox_exec
         velox_functions_prestosql
-#        velox_expression
         velox_parse_parser
-#        velox_exception
-#        velox_process
-#        velox_serialization
-#        velox_encode
-#        velox_caching
-#        ${FOLLY_WITH_DEPENDENCIES}
-#        ${FOLLY_BENCHMARK}
-#        ${FMT})
+        atomic
 )
 target_compile_options(BOSSVeloxEngine SYSTEM PUBLIC -DARROW_STATIC -msse4.2)
 if (UNIX AND NOT APPLE)
