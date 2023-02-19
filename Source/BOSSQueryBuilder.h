@@ -43,8 +43,8 @@ namespace boss::engines::velox {
         std::vector<AtomicExpr> element;
 
         void clear() {
-          opName.clear();
-          element.clear();
+            opName.clear();
+            element.clear();
         }
     };
 
@@ -65,9 +65,9 @@ namespace boss::engines::velox {
         std::vector<std::string> rightKeys;
 
         void clear() {
-          leftFlag = false;
-          leftKeys.clear();
-          rightKeys.clear();
+            leftFlag = false;
+            leftKeys.clear();
+            rightKeys.clear();
         }
     };
 
@@ -90,34 +90,35 @@ namespace boss::engines::velox {
         std::unordered_map<std::string, TypePtr> fileColumnNamesMap;
 
         void clear() {
-          limit = 0;
-          orderBy = false;
-          tableName.clear();
-          selectedColumns.clear();
-          tmpFieldFiltersVec.clear();
-          fieldFiltersVec.clear();
-          remainingFilter.clear();
-          projectionsVec.clear();
-          groupingKeysVec.clear();
-          aggregatesVec.clear();
-          orderByVec.clear();
-          hashJoinVec.clear();
-          hashJoinListVec.clear();
-          filter.clear();
+            limit = 0;
+            orderBy = false;
+            tableName.clear();
+            selectedColumns.clear();
+            tmpFieldFiltersVec.clear();
+            fieldFiltersVec.clear();
+            remainingFilter.clear();
+            projectionsVec.clear();
+            groupingKeysVec.clear();
+            aggregatesVec.clear();
+            orderByVec.clear();
+            hashJoinVec.clear();
+            hashJoinListVec.clear();
+            filter.clear();
         }
     };
 
     VectorPtr importFromBossAsViewer(BossType bossType, const BossArray &bossArray, memory::MemoryPool *pool);
+
+    RowVectorPtr runQuery(const std::shared_ptr<const core::PlanNode> &planNode,
+                          std::unique_ptr<TaskCursor> &taskCursor);
 
     BossArray makeBossArray(const void *buffers, int64_t length);
 
     std::vector<std::unordered_map<std::string, TypePtr>> getFileColumnNamesMap(
             std::vector<FormExpr> &veloxExprList);
 
-    std::vector<RowVectorPtr> getVeloxPlanBuilder(
-            std::vector<FormExpr> veloxExprList,
-            std::vector<std::unordered_map<std::string, TypePtr>> columnAliaseList,
-            std::unique_ptr<TaskCursor> &taskCursor);
+    core::PlanNodePtr getVeloxPlanBuilder(std::vector<FormExpr> veloxExprList,
+                                          std::vector<std::unordered_map<std::string, TypePtr>> columnAliaseList);
 
     void printResults(const std::vector<RowVectorPtr> &results);
 
