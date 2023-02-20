@@ -107,6 +107,31 @@ namespace boss::engines::velox {
         }
     };
 
+    class QueryBuilder {
+    public:
+        QueryBuilder() {
+            tableCnt = 0;
+        }
+
+        int tableCnt;
+        FormExpr curVeloxExpr;
+        std::vector<FormExpr> veloxExprList;
+        std::unordered_map<std::string, std::string> projNameMap;
+        std::unordered_map<std::string, std::string> aggrNameMap;
+        std::vector<std::unordered_map<std::string, TypePtr>> columnAliaseList;
+        std::shared_ptr<memory::MemoryPool> pool_{memory::getDefaultMemoryPool()};
+
+        void mergeGreaterFilter(FiledFilter input);
+
+        void formatVeloxFilter_Join();
+
+        void getFileColumnNamesMap();
+
+        void reformVeloxExpr();
+
+        core::PlanNodePtr getVeloxPlanBuilder();
+    };
+
     VectorPtr importFromBossAsViewer(BossType bossType, const BossArray &bossArray, memory::MemoryPool *pool);
 
     RowVectorPtr runQuery(const std::shared_ptr<const core::PlanNode> &planNode,
@@ -114,16 +139,9 @@ namespace boss::engines::velox {
 
     BossArray makeBossArray(const void *buffers, int64_t length);
 
-    std::vector<std::unordered_map<std::string, TypePtr>> getFileColumnNamesMap(
-            std::vector<FormExpr> &veloxExprList);
-
-    core::PlanNodePtr getVeloxPlanBuilder(std::vector<FormExpr> veloxExprList,
-                                          std::vector<std::unordered_map<std::string, TypePtr>> columnAliaseList);
-
     void printResults(const std::vector<RowVectorPtr> &results);
 
-    RowVectorPtr makeRowVector(std::vector<std::string> childNames, std::vector<VectorPtr> children);
-
-    extern std::shared_ptr<memory::MemoryPool> pool_;
+    RowVectorPtr makeRowVector(std::vector<std::string> childNames,
+                               std::vector<VectorPtr> children, memory::MemoryPool *pool);
 
 } // namespace boss::engines::velox

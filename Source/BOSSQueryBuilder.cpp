@@ -168,9 +168,8 @@ namespace boss::engines::velox {
         }
     }
 
-    std::shared_ptr<memory::MemoryPool> pool_{memory::getDefaultMemoryPool()};
-
-    RowVectorPtr makeRowVector(std::vector<std::string> childNames, std::vector<VectorPtr> children) {
+    RowVectorPtr makeRowVector(std::vector<std::string> childNames,
+                               std::vector<VectorPtr> children, memory::MemoryPool *pool) {
         std::vector<std::shared_ptr<const Type>> childTypes;
         childTypes.resize(children.size());
         for (int i = 0; i < children.size(); i++) {
@@ -179,7 +178,7 @@ namespace boss::engines::velox {
         auto rowType = ROW(std::move(childNames), std::move(childTypes));
         const size_t vectorSize = children.empty() ? 0 : children.front()->size();
 
-        return std::make_shared<RowVector>(pool_.get(), rowType, BufferPtr(nullptr), vectorSize,
+        return std::make_shared<RowVector>(pool, rowType, BufferPtr(nullptr), vectorSize,
                                            children);
     }
 
@@ -211,26 +210,6 @@ namespace boss::engines::velox {
                 "Date range check expression must have either a lower or an upper bound");
     }
 
-    std::vector<std::string> mergeColumnNames(
-            const std::vector<std::string> &firstColumnVector,
-            const std::vector<std::string> &secondColumnVector) {
-        std::vector<std::string> mergedColumnVector = std::move(firstColumnVector);
-        mergedColumnVector.insert(
-                mergedColumnVector.end(),
-                secondColumnVector.begin(),
-                secondColumnVector.end());
-        return mergedColumnVector;
-    };
-
-    std::vector<std::unordered_map<std::string, TypePtr>> getFileColumnNamesMap(
-            std::vector<FormExpr> &veloxExprList) {
-        std::vector<std::unordered_map<std::string, TypePtr>> columnAliaseList;
-        for (int i = 0; i < veloxExprList.size(); i++) {
-            columnAliaseList.emplace_back(veloxExprList[i].fileColumnNamesMap);
-        }
-        return columnAliaseList;
-    }
-
     RowTypePtr getOutputRowInfo(std::unordered_map<std::string, TypePtr> fileColumnNamesMap,
                                 const std::vector<std::string> &columnNames) {
         std::vector<std::string> names;
@@ -242,8 +221,162 @@ namespace boss::engines::velox {
         return std::make_shared<RowType>(std::move(names), std::move(types));
     }
 
-    core::PlanNodePtr getVeloxPlanBuilder(std::vector<FormExpr> veloxExprList,
-                                          std::vector<std::unordered_map<std::string, TypePtr>> columnAliaseList) {
+    std::vector<std::string> mergeColumnNames(
+            const std::vector<std::string> &firstColumnVector,
+            const std::vector<std::string> &secondColumnVector) {
+        std::vector<std::string> mergedColumnVector = std::move(firstColumnVector);
+        mergedColumnVector.insert(
+                mergedColumnVector.end(),
+                secondColumnVector.begin(),
+                secondColumnVector.end());
+        return mergedColumnVector;
+    };
+
+    void QueryBuilder::mergeGreaterFilter(FiledFilter input) {
+        if (input.element[0].type == cName) {
+            auto colName = input.element[0].data;
+            for (int i = 0; i < curVeloxExpr.tmpFieldFiltersVec.size(); i++) {
+                if (curVeloxExpr.tmpFieldFiltersVec[i].element[0].type == cValue &&
+                    curVeloxExpr.tmpFieldFiltersVec[i].element[1].type == cName &&
+                    curVeloxExpr.tmpFieldFiltersVec[i].element[1].data == colName) {
+                    input.element.push_back(curVeloxExpr.tmpFieldFiltersVec[i].element[0]);
+                    input.opName = "Between";
+                    curVeloxExpr.tmpFieldFiltersVec[i] = input;
+                    return;
+                }
+            }
+            curVeloxExpr.tmpFieldFiltersVec.push_back(input);
+        } else if (input.element[1].type == cName) {
+            auto colName = input.element[1].data;
+            for (int i = 0; i < curVeloxExpr.tmpFieldFiltersVec.size(); i++) {
+                if (curVeloxExpr.tmpFieldFiltersVec[i].element[0].type == cName &&
+                    curVeloxExpr.tmpFieldFiltersVec[i].element[1].type == cValue &&
+                    curVeloxExpr.tmpFieldFiltersVec[i].element[0].data == colName) {
+                    curVeloxExpr.tmpFieldFiltersVec[i].opName = "Between";
+                    curVeloxExpr.tmpFieldFiltersVec[i].element.push_back(input.element[0]);
+                    return;
+                }
+            }
+            curVeloxExpr.tmpFieldFiltersVec.push_back(input);
+        }
+    }
+
+    void QueryBuilder::formatVeloxFilter_Join() {
+        curVeloxExpr.fieldFiltersVec.clear();
+        curVeloxExpr.hashJoinVec.clear();
+        if (curVeloxExpr.tableName == "tmp") {
+            for (auto it = curVeloxExpr.tmpFieldFiltersVec.begin(); it != curVeloxExpr.tmpFieldFiltersVec.end(); ++it) {
+                auto const &filter = *it;
+                if (filter.opName == "Greater") {
+                    if (filter.element[0].type == cName && filter.element[1].type == cValue) {
+                        auto tmp = fmt::format("{} > {}", filter.element[0].data,
+                                               filter.element[1].data); // the column name should be on the left side.
+                        curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
+                    } else if (filter.element[1].type == cName && filter.element[0].type == cValue) {
+                        auto tmp = fmt::format("{} < {}", filter.element[1].data, filter.element[0].data);
+                        curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
+                    }
+                } else if (filter.opName == "Between") {
+                    auto tmp = fmt::format("{} between {} and {}", filter.element[0].data, filter.element[1].data,
+                                           filter.element[2].data);
+                    curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
+                } else if (filter.opName == "Equal") {
+                    if (filter.element[0].type == cName && filter.element[1].type == cName) {
+                        JoinPair tmpJoinPair;
+                        tmpJoinPair.leftKey = filter.element[0].data;
+                        tmpJoinPair.rightKey = filter.element[1].data;
+                        curVeloxExpr.hashJoinVec.push_back(tmpJoinPair);
+                    } else {
+                        auto tmp = fmt::format("{} = {}", filter.element[0].data, filter.element[1].data);
+                        curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
+                    }
+                } else if (filter.opName == "StringContains") {
+                    auto length = filter.element[1].data.size();
+                    auto tmp = fmt::format("{} like '%{}%'", filter.element[0].data,
+                                           filter.element[1].data.substr(1, length - 2));
+                    curVeloxExpr.remainingFilter = std::move(tmp);
+                } else VELOX_FAIL("unexpected Filter type");
+            }
+        } else {
+            const auto fileColumnNames = curVeloxExpr.fileColumnNamesMap;
+            for (auto it = curVeloxExpr.tmpFieldFiltersVec.begin(); it != curVeloxExpr.tmpFieldFiltersVec.end(); ++it) {
+                auto const &filter = *it;
+                if (filter.opName == "Greater") {
+                    if (filter.element[0].type == cName && filter.element[1].type == cValue) {
+                        auto tmp = fmt::format("{} > {}", filter.element[0].data,
+                                               filter.element[1].data); // the column name should be on the left side.
+                        if (fileColumnNames.find(filter.element[0].data) == fileColumnNames.end())
+                            curVeloxExpr.filter = std::move(tmp);  // not belong to any field
+                        else
+                            curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
+                    } else if (filter.element[1].type == cName && filter.element[0].type == cValue) {
+                        auto tmp = fmt::format("{} < {}", filter.element[1].data, filter.element[0].data);
+                        if (fileColumnNames.find(filter.element[1].data) == fileColumnNames.end())
+                            curVeloxExpr.filter = std::move(tmp);
+                        else
+                            curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
+                    }
+                } else if (filter.opName == "Between") {
+                    auto tmp = fmt::format("{} between {} and {}", filter.element[0].data, filter.element[1].data,
+                                           filter.element[2].data);
+                    curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
+                } else if (filter.opName == "Equal") {
+                    if (filter.element[0].type == cName && filter.element[1].type == cName) {
+                        JoinPair tmpJoinPair;
+                        tmpJoinPair.leftKey = filter.element[0].data;
+                        tmpJoinPair.rightKey = filter.element[1].data;
+                        curVeloxExpr.hashJoinVec.push_back(tmpJoinPair);
+                    } else {
+                        auto tmp = fmt::format("{} = {}", filter.element[0].data, filter.element[1].data);
+                        curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
+                    }
+                } else if (filter.opName == "StringContains") {
+                    auto length = filter.element[1].data.size();
+                    auto tmp = fmt::format("{} like '%{}%'", filter.element[0].data,
+                                           filter.element[1].data.substr(1, length - 2));
+                    curVeloxExpr.remainingFilter = std::move(tmp);
+                } else VELOX_FAIL("unexpected Filter type");
+            }
+        }
+    }
+
+    void QueryBuilder::getFileColumnNamesMap() {
+        veloxExprList.push_back(curVeloxExpr); //push back the last expression to the vector
+        for (int i = 0; i < veloxExprList.size(); i++) {
+            columnAliaseList.emplace_back(veloxExprList[i].fileColumnNamesMap);
+        }
+    }
+
+    void QueryBuilder::reformVeloxExpr() {
+        for (int i = 0; i < veloxExprList.size(); i++) {
+            for (auto it = veloxExprList[i].selectedColumns.begin(); it != veloxExprList[i].selectedColumns.end();) {
+                auto name = *it;
+                bool resizeFlag = false;
+                for (int j = 0; j < columnAliaseList.size(); j++) {
+                    auto idx = columnAliaseList[j].find(name);
+                    if (idx != columnAliaseList[j].end() &&
+                        j != i) { // remove column name in the wrong table planBuilder
+                        if (std::find(veloxExprList[j].selectedColumns.begin(), veloxExprList[j].selectedColumns.end(),
+                                      name) ==
+                            veloxExprList[j].selectedColumns.end())
+                            veloxExprList[j].selectedColumns.push_back(name);
+                        it = veloxExprList[i].selectedColumns.erase(it);
+                        resizeFlag = true;
+                        break;
+                    }
+                    if (idx == columnAliaseList[j].end() && j == i) { // not belong to any table, just rename
+                        it = veloxExprList[i].selectedColumns.erase(it);
+                        resizeFlag = true;
+                        break;
+                    }
+                }
+                if (!resizeFlag)
+                    ++it;
+            }
+        }
+    }
+
+    core::PlanNodePtr QueryBuilder::getVeloxPlanBuilder() {
         auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
         std::vector<core::PlanNodePtr> tableMapPlan;
         std::unordered_map<std::string, int> joinMapPlan;
