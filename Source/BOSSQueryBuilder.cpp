@@ -133,8 +133,8 @@ namespace boss::engines::velox {
     /// \param planNode
     /// \param [out] taskCursor a reference to the execution context.
     /// \return list of  Row vector
-    RowVectorPtr runQuery(const std::shared_ptr<const core::PlanNode> &planNode,
-                          std::unique_ptr<TaskCursor> &taskCursor) {
+    std::vector<RowVectorPtr> runQuery(const std::shared_ptr<const core::PlanNode> &planNode,
+                                       std::unique_ptr<TaskCursor> &taskCursor) {
         CursorParameters params;
         params.planNode = planNode;
 
@@ -144,7 +144,7 @@ namespace boss::engines::velox {
         while (taskCursor->moveNext()) {
             actualResults.push_back(taskCursor->current());
         };
-        return actualResults[0];
+        return actualResults;
     }
 
     int64_t toDate(std::string_view stringDate) {
@@ -386,7 +386,7 @@ namespace boss::engines::velox {
             const auto &fileColumnNames = veloxExpr.fileColumnNamesMap;
 
             auto plan = PlanBuilder(planNodeIdGenerator)
-                    .values({veloxExpr.rowData});
+                    .values(veloxExpr.rowDataVec);
 
             if (veloxExpr.fieldFiltersVec.size() > 0) {
                 auto filtersCnt = 0;

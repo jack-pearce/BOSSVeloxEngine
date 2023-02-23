@@ -86,7 +86,7 @@ namespace boss::engines::velox {
         std::vector<JoinPair> hashJoinVec;
         std::vector<JoinPairList> hashJoinListVec;
         std::string filter;  // can be used to filter non-field clause
-        RowVectorPtr rowData;
+        std::vector<RowVectorPtr> rowDataVec;
         std::unordered_map<std::string, TypePtr> fileColumnNamesMap;
 
         void clear() {
@@ -104,6 +104,7 @@ namespace boss::engines::velox {
             hashJoinVec.clear();
             hashJoinListVec.clear();
             filter.clear();
+            rowDataVec.clear();
         }
     };
 
@@ -134,8 +135,8 @@ namespace boss::engines::velox {
 
     VectorPtr importFromBossAsViewer(BossType bossType, const BossArray &bossArray, memory::MemoryPool *pool);
 
-    RowVectorPtr runQuery(const std::shared_ptr<const core::PlanNode> &planNode,
-                          std::unique_ptr<TaskCursor> &taskCursor);
+    std::vector<RowVectorPtr> runQuery(const std::shared_ptr<const core::PlanNode> &planNode,
+                                       std::unique_ptr<TaskCursor> &taskCursor);
 
     BossArray makeBossArray(const void *buffers, int64_t length);
 
