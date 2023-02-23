@@ -272,8 +272,8 @@ namespace boss::engines::velox {
     }
 
     void bossExprToVeloxFilter_Join(Expression const &expression, QueryBuilder &queryBuilder) {
-        static FiledFilter tmpFieldFilter;
-        static JoinPairList tmpJoinPairList;
+        static FiledFilter tmpFieldFilter; tmpFieldFilter.clear();
+        static JoinPairList tmpJoinPairList; tmpJoinPairList.clear();
         std::visit(
                 boss::utilities::overload(
                         [&](auto a) {
@@ -524,16 +524,18 @@ namespace boss::engines::velox {
         std::vector<VectorPtr> colDataVec;
         std::unordered_map<std::string, TypePtr> fileColumnNamesMap(columns.size());
 
-        std::transform(
+        std::for_each(
                 std::make_move_iterator(columns.begin()), std::make_move_iterator(columns.end()),
-                std::inserter(fileColumnNamesMap, fileColumnNamesMap.begin()),
-                [&colNameVec, &colDataVec, pool](auto &&columnExpr) {
+                [&colNameVec, &colDataVec, pool, &fileColumnNamesMap](auto &&columnExpr) {
                     auto column = get < ComplexExpression > (std::forward<decltype(columnExpr)>(columnExpr));
                     auto [head, unused_, dynamics, spans] = std::move(column).decompose();
                     auto columnName = get < Symbol > (std::move(dynamics.at(0)));
                     auto dynamic = get < ComplexExpression > (std::move(dynamics.at(1)));
                     auto list = transformDynamicsToSpans(std::move(dynamic));
                     auto [listHead, listUnused_, listDynamics, listSpans] = std::move(list).decompose();
+		     if(listSpans.empty()) {
+			return;
+		     }
 
                     auto colData = std::visit(
                             [pool]<typename T>(boss::Span<T> &&typedSpan) -> VectorPtr {
@@ -548,7 +550,7 @@ namespace boss::engines::velox {
                     auto columnType = colData->type();
                     colNameVec.emplace_back(columnName.getName());
                     colDataVec.push_back(std::move(colData));
-                    return std::make_pair(columnName.getName(), columnType);
+                    fileColumnNamesMap.insert(std::make_pair(columnName.getName(), columnType));
                 });
         rowData = makeRowVector(colNameVec, colDataVec, pool);
 
@@ -604,9 +606,11 @@ namespace boss::engines::velox {
 #ifdef DebugInfo
                                     std::cout << "argument  " << argument << endl;
 #endif
-                                    std::stringstream out;
-                                    out << argument;
-                                    std::string tmpArhStr = out.str();
+			             auto toString = [](auto&& arg) {
+	                                std::stringstream out;
+        	                        out << arg;
+                	                return out.str();
+				     };
 
                                     if (headName == "Where") {
                                         std::visit(
@@ -618,7 +622,7 @@ namespace boss::engines::velox {
                                             queryBuilder.formatVeloxFilter_Join();
                                     } else if (headName == "As") {
                                         if ((it - arguments.begin()) % 2 == 0) {
-                                            projectionName = tmpArhStr;
+                                            projectionName = toString(argument);
                                         } else {
                                             std::vector<std::string> projectionList;
                                             std::visit(
@@ -661,16 +665,16 @@ namespace boss::engines::velox {
                                         auto aName = fmt::format("a{}", queryBuilder.aggrNameMap.size());
                                         aggrPair aggregation;
                                         aggregation.op = "sum";
-                                        aggregation.oldName = tmpArhStr;
+                                        aggregation.oldName = toString(argument);
                                         aggregation.newName = aName;
                                         queryBuilder.curVeloxExpr.aggregatesVec.push_back(aggregation);
                                         // new implicit name for maybe later orderBy
-                                        queryBuilder.aggrNameMap.emplace(tmpArhStr, aName);
+                                        queryBuilder.aggrNameMap.emplace(aggregation.oldName, aName);
                                         queryBuilder.curVeloxExpr.orderBy = true;
                                         if (std::find(queryBuilder.curVeloxExpr.selectedColumns.begin(),
                                                       queryBuilder.curVeloxExpr.selectedColumns.end(),
-                                                      tmpArhStr) == queryBuilder.curVeloxExpr.selectedColumns.end())
-                                            queryBuilder.curVeloxExpr.selectedColumns.push_back(tmpArhStr);
+                                                      aggregation.oldName) == queryBuilder.curVeloxExpr.selectedColumns.end())
+                                            queryBuilder.curVeloxExpr.selectedColumns.push_back(aggregation.oldName);
                                     } else {
                                         std::visit([&queryBuilder](auto &&argument) {
                                                        return bossExprToVelox(argument, queryBuilder);
