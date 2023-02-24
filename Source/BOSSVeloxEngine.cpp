@@ -106,6 +106,8 @@ namespace boss::engines::velox {
     };
 
     static SpanReferenceCounter spanReferenceCounter;
+    static FiledFilter tmpFieldFilter;
+    static JoinPairList tmpJoinPairList;
 
     int64_t dateToInt64(std::string str) {
         std::istringstream iss;
@@ -272,8 +274,6 @@ namespace boss::engines::velox {
     }
 
     void bossExprToVeloxFilter_Join(Expression const &expression, QueryBuilder &queryBuilder) {
-        static FiledFilter tmpFieldFilter;
-        static JoinPairList tmpJoinPairList;
         std::visit(
                 boss::utilities::overload(
                         [&](auto a) {
@@ -704,6 +704,8 @@ namespace boss::engines::velox {
     }
 
     boss::Expression Engine::evaluate(boss::Expression &&e) {
+        tmpFieldFilter.clear();
+        tmpJoinPairList.clear();
         QueryBuilder queryBuilder;
         bossExprToVelox(e, queryBuilder);
         if (queryBuilder.tableCnt) {
