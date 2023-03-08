@@ -1,8 +1,6 @@
 #pragma once
 
 #include "BOSSQueryBuilder.h"
-#include <BOSS.hpp>
-#include <Expression.hpp>
 #include <unordered_map>
 
 #ifdef _WIN32

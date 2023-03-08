@@ -8,14 +8,6 @@ using namespace facebook::velox::exec::test;
 namespace boss::engines::velox {
     void mockArrayRelease(BossArray *) {}
 
-    BossArray makeBossArray(const void *buffers, int64_t length) {
-        return BossArray{
-                .length = length,
-                .buffers = buffers,
-                .release = mockArrayRelease,
-        };
-    }
-
 // Optionally, holds shared_ptrs pointing to the BossArray object that
 // holds the buffer object that describes the BossArray,
 // which will be released to signal that we will no longer hold on to the data
@@ -42,6 +34,17 @@ namespace boss::engines::velox {
         static const BufferViewReleaser kViewerReleaser;
         return BufferView<BufferViewReleaser>::create(
                 static_cast<const uint8_t *>(buffer), length, kViewerReleaser);
+    }
+
+    // Wraps a naked pointer using a Velox buffer view, without copying it. This
+    // buffer view uses shared_ptr to manage reference counting and releasing for
+    // the BossArray object
+    BufferPtr wrapInBufferViewAsOwner(
+            const void *buffer,
+            size_t length,
+            std::shared_ptr<BossArray> arrayReleaser) {
+        return BufferView<BufferViewReleaser>::create(
+                static_cast<const uint8_t *>(buffer), length, {std::move(BufferViewReleaser(arrayReleaser))});
     }
 
     using WrapInBufferViewFunc =
@@ -88,7 +91,7 @@ namespace boss::engines::velox {
 
     VectorPtr importFromBossImpl(
             BossType bossType,
-            const BossArray &bossArray,
+            BossArray &bossArray,
             memory::MemoryPool *pool,
             WrapInBufferViewFunc wrapInBufferView) {
         VELOX_USER_CHECK_NOT_NULL(bossArray.release, "bossArray was released.");
@@ -123,10 +126,29 @@ namespace boss::engines::velox {
 
     VectorPtr importFromBossAsViewer(
             BossType bossType,
-            const BossArray &bossArray,
+            BossArray &bossArray,
             memory::MemoryPool *pool) {
         return importFromBossImpl(
                 bossType, bossArray, pool, wrapInBufferViewAsViewer);
+    }
+
+    VectorPtr importFromBossAsOwner(
+            BossType bossType,
+            BossArray &bossArray,
+            memory::MemoryPool *pool) {
+
+        std::shared_ptr<BossArray> arrayReleaser(new BossArray(bossArray));
+
+        VectorPtr imported = importFromBossImpl(
+                bossType, bossArray, pool,
+                [&arrayReleaser](const void *buffer, size_t length) {
+                    return wrapInBufferViewAsOwner(
+                            buffer, length, arrayReleaser);
+                });
+
+        bossArray.release = nullptr;
+
+        return imported;
     }
 
     /// Run a given planNode

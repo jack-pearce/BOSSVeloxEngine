@@ -1,5 +1,8 @@
 #pragma once
 
+#include <ExpressionUtilities.hpp>
+#include <BOSS.hpp>
+#include <Expression.hpp>
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 
@@ -10,6 +13,8 @@ using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 
 namespace boss::engines::velox {
+    using VeloxExpressionSystem = ExtensibleExpressionSystem<>;
+    using ExpressionSpanArgument = VeloxExpressionSystem::ExpressionSpanArgument;
     /**
  *     bool = 0, long = 1, double = 2 , ::std::string = 3, Symbol = 4
  */
@@ -20,8 +25,25 @@ namespace boss::engines::velox {
         bSTRING
     };
 
+    struct BossArray;
+
+    void mockArrayRelease(BossArray *);
+
     struct BossArray {
-        // Array data description
+        explicit BossArray(int64_t span_size, void *span_begin, ExpressionSpanArgument &&span)
+                : length(span_size),
+                  buffers(span_begin),
+                  holdSpan(std::move(span)) {
+            release = mockArrayRelease;
+        }
+
+        explicit BossArray(BossArray &bossArray) noexcept {
+            length = bossArray.length;
+            buffers = bossArray.buffers;
+            holdSpan = std::move(bossArray.holdSpan);
+        }
+
+        ExpressionSpanArgument holdSpan;
         int64_t length;
         const void *buffers;
 
@@ -133,12 +155,12 @@ namespace boss::engines::velox {
         core::PlanNodePtr getVeloxPlanBuilder();
     };
 
-    VectorPtr importFromBossAsViewer(BossType bossType, const BossArray &bossArray, memory::MemoryPool *pool);
+    VectorPtr importFromBossAsViewer(BossType bossType, BossArray &bossArray, memory::MemoryPool *pool);
+
+    VectorPtr importFromBossAsOwner(BossType bossType, BossArray &bossArray, memory::MemoryPool *pool);
 
     std::vector<RowVectorPtr> runQuery(const std::shared_ptr<const core::PlanNode> &planNode,
                                        std::unique_ptr<TaskCursor> &taskCursor);
-
-    BossArray makeBossArray(const void *buffers, int64_t length);
 
     void printResults(const std::vector<RowVectorPtr> &results);
 

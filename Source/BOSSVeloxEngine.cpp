@@ -184,7 +184,7 @@ namespace boss::engines::velox {
                                 auto size = input.size();
                                 spanReferenceCounter.add(ptr, [v = std::move(input)]() {});
                                 return boss::Span<Element>(ptr, size,
-                                                           [ptr](auto &&) { spanReferenceCounter.remove(ptr); });
+                                                           [ptr]() { spanReferenceCounter.remove(ptr); });
                             },
                             std::forward<decltype(untypedInput)>(untypedInput));
                 });
@@ -215,12 +215,12 @@ namespace boss::engines::velox {
     }
 
     template<typename T>
-    VectorPtr spanToVelox(boss::Span<T> const &span, memory::MemoryPool *pool) {
-        auto bossArray = makeBossArray(span.begin(), span.size());
+    VectorPtr spanToVelox(boss::Span<T> &&span, memory::MemoryPool *pool) {
+        BossArray bossArray(span.size(), span.begin(), std::move(span));
         if constexpr (std::is_same_v<T, int64_t>) {
-            return importFromBossAsViewer(BossType::bBIGINT, bossArray, pool);
+            return importFromBossAsOwner(BossType::bBIGINT, bossArray, pool);
         } else if constexpr (std::is_same_v<T, double_t>) {
-            return importFromBossAsViewer(BossType::bDOUBLE, bossArray, pool);
+            return importFromBossAsOwner(BossType::bDOUBLE, bossArray, pool);
         }
     }
 
@@ -230,11 +230,11 @@ namespace boss::engines::velox {
             (vec->typeKind() == TypeKind::SMALLINT) ||
             (vec->typeKind() == TypeKind::INTEGER)) {
             return boss::Span<const int64_t>(vec->values()->as<int64_t>(), vec->size(),
-                                             [](auto && /*unused*/) {});
+                                             []() {});
         } else if ((vec->typeKind() == TypeKind::DOUBLE) ||
                    (vec->typeKind() == TypeKind::REAL)) {
             return boss::Span<const double_t>(vec->values()->as<double_t>(), vec->size(),
-                                              [](auto && /*unused*/) {});
+                                              []() {});
         } else {
             throw std::runtime_error("veloxToSpan: array type not supported");
         }
@@ -543,7 +543,7 @@ namespace boss::engines::velox {
                         VectorPtr subColData = std::visit(
                                 [pool]<typename T>(boss::Span<T> &&typedSpan) -> VectorPtr {
                                     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, double_t>) {
-                                        return spanToVelox<T>(typedSpan, pool);
+                                        return spanToVelox<T>(std::move(typedSpan), pool);
                                     } else {
                                         throw std::runtime_error("unsupported column type in Select");
                                     }
@@ -719,9 +719,11 @@ namespace boss::engines::velox {
             std::cout << std::endl;
 
             ExpressionSpanArguments newSpans;
-            for (int i = 0; i < results[0]->childrenSize(); ++i) {
-                for (int j = 0; j < results.size(); ++j) {
-                    newSpans.emplace_back(veloxtoSpan(results[j]->childAt(i)));
+            if (results.size()) {
+                for (int i = 0; i < results[0]->childrenSize(); ++i) {
+                    for (int j = 0; j < results.size(); ++j) {
+                        newSpans.emplace_back(veloxtoSpan(results[j]->childAt(i)));
+                    }
                 }
             }
 
