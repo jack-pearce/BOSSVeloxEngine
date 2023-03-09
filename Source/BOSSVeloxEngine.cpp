@@ -115,7 +115,7 @@ namespace boss::engines::velox {
         struct std::tm tm = {};
         iss >> std::get_time(&tm, "%Y-%m-%d");
         int64_t t = std::mktime(&tm);
-        return (int64_t) std::chrono::duration_cast<std::chrono::milliseconds>(
+        return (int64_t) std::chrono::duration_cast<std::chrono::days>(
                 std::chrono::system_clock::from_time_t(t).time_since_epoch())
                 .count();
     }
