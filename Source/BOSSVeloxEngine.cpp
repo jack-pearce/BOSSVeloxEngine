@@ -273,7 +273,7 @@ namespace boss::engines::velox {
         projectionList.push_back(out);
     }
 
-    void bossExprToVeloxFilter_Join(Expression &expression, QueryBuilder &queryBuilder) {
+    void bossExprToVeloxFilter_Join(Expression &&expression, QueryBuilder &queryBuilder) {
         std::visit(
                 boss::utilities::overload(
                         [&](auto a) {
@@ -306,7 +306,7 @@ namespace boss::engines::velox {
                             element.type = cValue;
                             tmpFieldFilter.element.emplace_back(element);
                         },
-                        [&](ComplexExpression &expression) {
+                        [&](ComplexExpression &&expression) {
                             auto headName = expression.getHead().getName();
 #ifdef DebugInfo
                             std::cout << "headName  " << headName << endl;
@@ -361,7 +361,7 @@ namespace boss::engines::velox {
                                     continue;
                                 }
 
-                                bossExprToVeloxFilter_Join(argument, queryBuilder);
+                                bossExprToVeloxFilter_Join(std::move(argument), queryBuilder);
                             }
                             if (!tmpFieldFilter.opName.empty()) { // field filter or join op post-process
                                 if (headName == "Greater")
@@ -380,10 +380,10 @@ namespace boss::engines::velox {
                                 }
                             }
                         }),
-                (Expression::SuperType &) expression);
+                std::move(expression));
     }
 
-    void bossExprToVeloxProj_PartialAggr(Expression &expression, std::vector<std::string> &projectionList,
+    void bossExprToVeloxProj_PartialAggr(Expression &&expression, std::vector<std::string> &projectionList,
                                          QueryBuilder &queryBuilder) {
         std::visit(
                 boss::utilities::overload(
@@ -405,7 +405,7 @@ namespace boss::engines::velox {
                         [&](std::string const &a) {
                             projectionList.push_back(a);
                         },
-                        [&](ComplexExpression &expression) {
+                        [&](ComplexExpression &&expression) {
                             auto headName = expression.getHead().getName();
 #ifdef DebugInfo
                             std::cout << "headName  " << headName << endl;
@@ -437,7 +437,7 @@ namespace boss::engines::velox {
                                     continue;
                                 }
 
-                                bossExprToVeloxProj_PartialAggr(argument, projectionList, queryBuilder);
+                                bossExprToVeloxProj_PartialAggr(std::move(argument), projectionList, queryBuilder);
                                 if (headName == "Year") {
 //                              auto out = fmt::format("year({})", projectionList.back());
                                     // Date type has already been treated as int64
@@ -451,10 +451,10 @@ namespace boss::engines::velox {
                                 formatVeloxProjection(projectionList, queryBuilder.projNameMap);
                             }
                         }),
-                (Expression::SuperType &) expression);
+                std::move(expression));
     }
 
-    void bossExprToVeloxBy(Expression &expression, QueryBuilder &queryBuilder) {
+    void bossExprToVeloxBy(Expression &&expression, QueryBuilder &queryBuilder) {
         std::visit(
                 boss::utilities::overload(
                         [&](char const *a) {
@@ -481,7 +481,7 @@ namespace boss::engines::velox {
                         },
                         [&](std::string const &a) {
                         },
-                        [&](ComplexExpression &expression) {
+                        [&](ComplexExpression &&expression) {
                             auto headName = expression.getHead().getName();
 #ifdef DebugInfo
                             std::cout << "headName  " << headName << endl;
@@ -493,16 +493,16 @@ namespace boss::engines::velox {
 #ifdef DebugInfo
                                 std::cout << "argument  " << argument << endl;
 #endif
-                                bossExprToVeloxBy(argument, queryBuilder);
+                                bossExprToVeloxBy(std::move(argument), queryBuilder);
                             }
                         },
                         [](auto /*args*/) { throw std::runtime_error("unexpected argument type"); }),
-                (Expression::SuperType &) expression);
+                std::move(expression));
     }
 
 // "Table"_("Column"_("Id"_, "List"_(1, 2, 3), "Column"_("Value"_ "List"_(0.1, 10.0, 5.2)))
     std::unordered_map<std::string, TypePtr> getColumns(
-            ComplexExpression &expression, std::vector<RowVectorPtr> &rowDataVec, memory::MemoryPool *pool) {
+            ComplexExpression &&expression, std::vector<RowVectorPtr> &rowDataVec, memory::MemoryPool *pool) {
         ExpressionArguments columns = std::move(expression).getArguments();
         std::vector<std::string> colNameVec;
         std::vector<std::vector<VectorPtr>> colDataListVec;
@@ -555,7 +555,7 @@ namespace boss::engines::velox {
         return fileColumnNamesMap;
     }
 
-    void bossExprToVelox(Expression &expression, QueryBuilder &queryBuilder) {
+    void bossExprToVelox(Expression &&expression, QueryBuilder &queryBuilder) {
         std::visit(
                 boss::utilities::overload(
                         [&](bool a) {
@@ -569,11 +569,11 @@ namespace boss::engines::velox {
                         },
                         [&](std::double_t a) {
                         },
-                        [&](Symbol const &a) {
+                        [](Symbol const &a) {
                         },
                         [&](std::string const &a) {
                         },
-                        [&](ComplexExpression &expression) {
+                        [&](ComplexExpression &&expression) {
                             std::string projectionName;
                             auto headName = expression.getHead().getName();
 #ifdef DebugInfo
@@ -587,7 +587,7 @@ namespace boss::engines::velox {
                                 }
                                 queryBuilder.curVeloxExpr.tableName = fmt::format("Table{}",
                                                                                   queryBuilder.tableCnt++); // indicate table names
-                                queryBuilder.curVeloxExpr.fileColumnNamesMap = getColumns(expression,
+                                queryBuilder.curVeloxExpr.fileColumnNamesMap = getColumns(std::move(expression),
                                                                                           queryBuilder.curVeloxExpr.rowDataVec,
                                                                                           queryBuilder.pool_.get());
                                 return;
@@ -616,7 +616,7 @@ namespace boss::engines::velox {
                                 };
 
                                 if (headName == "Where") {
-                                    bossExprToVeloxFilter_Join(argument, queryBuilder);
+                                    bossExprToVeloxFilter_Join(std::move(argument), queryBuilder);
                                     if (queryBuilder.curVeloxExpr.tmpFieldFiltersVec.size() > 0)
                                         queryBuilder.formatVeloxFilter_Join();
                                 } else if (headName == "As") {
@@ -624,7 +624,8 @@ namespace boss::engines::velox {
                                         projectionName = toString(argument);
                                     } else {
                                         std::vector<std::string> projectionList;
-                                        bossExprToVeloxProj_PartialAggr(argument, projectionList, queryBuilder);
+                                        bossExprToVeloxProj_PartialAggr(std::move(argument), projectionList,
+                                                                        queryBuilder);
 
                                         // fill the new name for aggregation
                                         if (!queryBuilder.curVeloxExpr.aggregatesVec.empty()) {
@@ -649,7 +650,7 @@ namespace boss::engines::velox {
                                         }
                                     }
                                 } else if (headName == "By") {
-                                    bossExprToVeloxBy(argument, queryBuilder);
+                                    bossExprToVeloxBy(std::move(argument), queryBuilder);
                                 } else if (headName == "Sum") {
                                     auto aName = fmt::format("a{}", queryBuilder.aggrNameMap.size());
                                     aggrPair aggregation;
@@ -666,19 +667,19 @@ namespace boss::engines::velox {
                                         queryBuilder.curVeloxExpr.selectedColumns.end())
                                         queryBuilder.curVeloxExpr.selectedColumns.push_back(aggregation.oldName);
                                 } else {
-                                    bossExprToVelox(argument, queryBuilder);
+                                    bossExprToVelox(std::move(argument), queryBuilder);
                                 }
                             }
                         },
                         [](auto /*args*/) { throw std::runtime_error("unexpected argument type"); }),
-                (Expression::SuperType &) expression);
+                std::move(expression));
     }
 
     boss::Expression Engine::evaluate(boss::Expression &&e) {
         tmpFieldFilter.clear();
         tmpJoinPairList.clear();
         QueryBuilder queryBuilder;
-        bossExprToVelox(e, queryBuilder);
+        bossExprToVelox(std::move(e), queryBuilder);
         if (queryBuilder.tableCnt) {
             queryBuilder.getFileColumnNamesMap();
             queryBuilder.reformVeloxExpr();
