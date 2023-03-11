@@ -273,7 +273,7 @@ namespace boss::engines::velox {
         projectionList.push_back(out);
     }
 
-    void bossExprToVeloxFilter_Join(Expression const &expression, QueryBuilder &queryBuilder) {
+    void bossExprToVeloxFilter_Join(Expression &expression, QueryBuilder &queryBuilder) {
         std::visit(
                 boss::utilities::overload(
                         [&](auto a) {
@@ -306,7 +306,7 @@ namespace boss::engines::velox {
                             element.type = cValue;
                             tmpFieldFilter.element.emplace_back(element);
                         },
-                        [&](ComplexExpression const &expression) {
+                        [&](ComplexExpression &expression) {
                             auto headName = expression.getHead().getName();
 #ifdef DebugInfo
                             std::cout << "headName  " << headName << endl;
@@ -315,77 +315,75 @@ namespace boss::engines::velox {
                                 tmpFieldFilter.clear();
                                 tmpFieldFilter.opName = headName;
                             }
-                            auto process = [&](auto const &arguments) {
-                                for (auto it = arguments.begin(); it != arguments.end(); ++it) {
-                                    auto const &argument = *it;
+
+                            auto [head, statics, dynamics, oldSpans] = std::move(expression).decompose();
+                            auto it = std::move_iterator(dynamics.begin());
+                            for (; it != std::move_iterator(dynamics.end()); ++it) {
+                                auto argument = *it;
 #ifdef DebugInfo
-                                    std::cout << "argument  " << argument << endl;
+                                std::cout << "argument  " << argument << endl;
 #endif
-                                    std::stringstream out;
-                                    out << argument;
-                                    std::string tmpArhStr = out.str();
+                                std::stringstream out;
+                                out << argument;
+                                std::string tmpArhStr = out.str();
 
-                                    if (tmpArhStr.substr(0, 10) == "DateObject") {
-                                        std::string dateString = tmpArhStr.substr(12, 10);
-
-                                        auto dateInt64 = dateToInt64(dateString);
-
-                                        AtomicExpr element;
-                                        element.data = to_string(dateInt64);
-                                        element.type = cValue;
-                                        tmpFieldFilter.element.emplace_back(element);
-                                        continue;
-                                    }
-                                    if (tmpArhStr.substr(0, 4) == "Date") {
-                                        std::string dateString = tmpArhStr.substr(6, 10);
-                                        auto dateInt64 = dateToInt64(dateString);
-
-                                        AtomicExpr element;
-                                        element.data = to_string(dateInt64);
-                                        element.type = cValue;
-                                        tmpFieldFilter.element.emplace_back(element);
-                                        continue;
-                                    }
-                                    if (headName == "List") {
-                                        if (std::find(queryBuilder.curVeloxExpr.selectedColumns.begin(),
-                                                      queryBuilder.curVeloxExpr.selectedColumns.end(), // avoid repeated selectedColumns
-                                                      tmpArhStr) == queryBuilder.curVeloxExpr.selectedColumns.end())
-                                            queryBuilder.curVeloxExpr.selectedColumns.push_back(tmpArhStr);
-                                        if (!tmpJoinPairList.leftFlag)
-                                            tmpJoinPairList.leftKeys.emplace_back(tmpArhStr);
-                                        else
-                                            tmpJoinPairList.rightKeys.emplace_back(tmpArhStr);
-                                        continue;
-                                    }
-
-                                    std::visit([&queryBuilder](auto &&argument) {
-                                                   return bossExprToVeloxFilter_Join(argument, queryBuilder);
-                                               },
-                                               argument.getArgument());
-                                }
-                                if (!tmpFieldFilter.opName.empty()) { // field filter or join op post-process
-                                    if (headName == "Greater")
-                                        queryBuilder.mergeGreaterFilter(tmpFieldFilter);
-                                    else if ((headName == "Equal" || headName == "StringContains") &&
-                                             tmpFieldFilter.element.size() > 0) {
-                                        queryBuilder.curVeloxExpr.tmpFieldFiltersVec.push_back(tmpFieldFilter);
-                                    }
-                                }
                                 if (headName == "List") {
+                                    if (std::find(queryBuilder.curVeloxExpr.selectedColumns.begin(),
+                                                  queryBuilder.curVeloxExpr.selectedColumns.end(), // avoid repeated selectedColumns
+                                                  tmpArhStr) == queryBuilder.curVeloxExpr.selectedColumns.end())
+                                        queryBuilder.curVeloxExpr.selectedColumns.push_back(tmpArhStr);
                                     if (!tmpJoinPairList.leftFlag)
-                                        tmpJoinPairList.leftFlag = true;
-                                    else {
-                                        queryBuilder.curVeloxExpr.hashJoinListVec.push_back(tmpJoinPairList);
-                                        tmpJoinPairList.clear();
-                                    }
+                                        tmpJoinPairList.leftKeys.emplace_back(tmpArhStr);
+                                    else
+                                        tmpJoinPairList.rightKeys.emplace_back(tmpArhStr);
+                                    continue;
                                 }
-                            };
-                            process(expression.getArguments());
+
+                                if (tmpArhStr.substr(0, 10) == "DateObject") {
+                                    std::string dateString = tmpArhStr.substr(12, 10);
+
+                                    auto dateInt64 = dateToInt64(dateString);
+
+                                    AtomicExpr element;
+                                    element.data = to_string(dateInt64);
+                                    element.type = cValue;
+                                    tmpFieldFilter.element.emplace_back(element);
+                                    continue;
+                                }
+                                if (tmpArhStr.substr(0, 4) == "Date") {
+                                    std::string dateString = tmpArhStr.substr(6, 10);
+                                    auto dateInt64 = dateToInt64(dateString);
+
+                                    AtomicExpr element;
+                                    element.data = to_string(dateInt64);
+                                    element.type = cValue;
+                                    tmpFieldFilter.element.emplace_back(element);
+                                    continue;
+                                }
+
+                                bossExprToVeloxFilter_Join(argument, queryBuilder);
+                            }
+                            if (!tmpFieldFilter.opName.empty()) { // field filter or join op post-process
+                                if (headName == "Greater")
+                                    queryBuilder.mergeGreaterFilter(tmpFieldFilter);
+                                else if ((headName == "Equal" || headName == "StringContains") &&
+                                         tmpFieldFilter.element.size() > 0) {
+                                    queryBuilder.curVeloxExpr.tmpFieldFiltersVec.push_back(tmpFieldFilter);
+                                }
+                            }
+                            if (headName == "List") {
+                                if (!tmpJoinPairList.leftFlag)
+                                    tmpJoinPairList.leftFlag = true;
+                                else {
+                                    queryBuilder.curVeloxExpr.hashJoinListVec.push_back(tmpJoinPairList);
+                                    tmpJoinPairList.clear();
+                                }
+                            }
                         }),
-                (Expression::SuperType const &) expression);
+                (Expression::SuperType &) expression);
     }
 
-    void bossExprToVeloxProj_PartialAggr(Expression const &expression, std::vector<std::string> &projectionList,
+    void bossExprToVeloxProj_PartialAggr(Expression &expression, std::vector<std::string> &projectionList,
                                          QueryBuilder &queryBuilder) {
         std::visit(
                 boss::utilities::overload(
@@ -407,62 +405,56 @@ namespace boss::engines::velox {
                         [&](std::string const &a) {
                             projectionList.push_back(a);
                         },
-                        [&](ComplexExpression const &expression) {
+                        [&](ComplexExpression &expression) {
                             auto headName = expression.getHead().getName();
 #ifdef DebugInfo
                             std::cout << "headName  " << headName << endl;
 #endif
                             projectionList.push_back(headName);
-                            auto process = [&](auto const &arguments) {
-                                for (auto it = arguments.begin(); it != arguments.end(); ++it) {
-                                    auto const &argument = *it;
+
+                            auto [head, statics, dynamics, oldSpans] = std::move(expression).decompose();
+                            auto it = std::move_iterator(dynamics.begin());
+                            for (; it != std::move_iterator(dynamics.end()); ++it) {
+                                auto argument = *it;
 #ifdef DebugInfo
-                                    std::cout << "argument  " << argument << endl;
+                                std::cout << "argument  " << argument << endl;
 #endif
+                                if (headName == "Sum" || headName == "Avg" || headName == "Count") {
                                     std::stringstream out;
                                     out << argument;
                                     std::string tmpArhStr = out.str();
+                                    aggrPair aggregation;
+                                    auto str = headName;
+                                    std::transform(str.begin(), str.end(), str.begin(), ::tolower);
+                                    aggregation.op = str;
+                                    aggregation.oldName = tmpArhStr;
+                                    aggregation.newName = "";
+                                    queryBuilder.curVeloxExpr.aggregatesVec.push_back(aggregation);
+                                    if (std::find(queryBuilder.curVeloxExpr.selectedColumns.begin(),
+                                                  queryBuilder.curVeloxExpr.selectedColumns.end(),
+                                                  tmpArhStr) == queryBuilder.curVeloxExpr.selectedColumns.end())
+                                        queryBuilder.curVeloxExpr.selectedColumns.push_back(tmpArhStr);
+                                    continue;
+                                }
 
-                                    if (headName == "Sum" || headName == "Avg" || headName == "Count") {
-                                        aggrPair aggregation;
-                                        auto str = headName;
-                                        std::transform(str.begin(), str.end(), str.begin(), ::tolower);
-                                        aggregation.op = str;
-                                        aggregation.oldName = tmpArhStr;
-                                        aggregation.newName = "";
-                                        queryBuilder.curVeloxExpr.aggregatesVec.push_back(aggregation);
-                                        if (std::find(queryBuilder.curVeloxExpr.selectedColumns.begin(),
-                                                      queryBuilder.curVeloxExpr.selectedColumns.end(),
-                                                      tmpArhStr) == queryBuilder.curVeloxExpr.selectedColumns.end())
-                                            queryBuilder.curVeloxExpr.selectedColumns.push_back(tmpArhStr);
-                                        continue;
-                                    }
-
-                                    std::visit(
-                                            [&projectionList, &queryBuilder](auto &&argument) {
-                                                return bossExprToVeloxProj_PartialAggr(argument, projectionList,
-                                                                                       queryBuilder);
-                                            },
-                                            argument.getArgument());
-                                    if (headName == "Year") {
+                                bossExprToVeloxProj_PartialAggr(argument, projectionList, queryBuilder);
+                                if (headName == "Year") {
 //                              auto out = fmt::format("year({})", projectionList.back());
-                                        // Date type has already been treated as int64
-                                        auto out = projectionList.back();
-                                        projectionList.pop_back();
-                                        projectionList.pop_back();
-                                        projectionList.push_back(out);
-                                    }
+                                    // Date type has already been treated as int64
+                                    auto out = projectionList.back();
+                                    projectionList.pop_back();
+                                    projectionList.pop_back();
+                                    projectionList.push_back(out);
                                 }
-                                if (projectionList.size() >= 3) { // field filter or join op post-process
-                                    formatVeloxProjection(projectionList, queryBuilder.projNameMap);
-                                }
-                            };
-                            process(expression.getArguments());
+                            }
+                            if (projectionList.size() >= 3) { // field filter or join op post-process
+                                formatVeloxProjection(projectionList, queryBuilder.projNameMap);
+                            }
                         }),
-                (Expression::SuperType const &) expression);
+                (Expression::SuperType &) expression);
     }
 
-    void bossExprToVeloxBy(Expression const &expression, QueryBuilder &queryBuilder) {
+    void bossExprToVeloxBy(Expression &expression, QueryBuilder &queryBuilder) {
         std::visit(
                 boss::utilities::overload(
                         [&](char const *a) {
@@ -489,36 +481,28 @@ namespace boss::engines::velox {
                         },
                         [&](std::string const &a) {
                         },
-                        [&](ComplexExpression const &expression) {
+                        [&](ComplexExpression &expression) {
                             auto headName = expression.getHead().getName();
 #ifdef DebugInfo
                             std::cout << "headName  " << headName << endl;
 #endif
-                            auto process = [&](auto const &arguments) {
-                                for (auto it = arguments.begin(); it != arguments.end(); ++it) {
-                                    auto const &argument = *it;
+                            auto [head, statics, dynamics, oldSpans] = std::move(expression).decompose();
+                            auto it = std::move_iterator(dynamics.begin());
+                            for (; it != std::move_iterator(dynamics.end()); ++it) {
+                                auto argument = *it;
 #ifdef DebugInfo
-                                    std::cout << "argument  " << argument << endl;
+                                std::cout << "argument  " << argument << endl;
 #endif
-                                    std::stringstream out;
-                                    out << argument;
-                                    std::string tmpArhStr = out.str();
-                                    std::visit(
-                                            [&queryBuilder](auto &&argument) {
-                                                return bossExprToVeloxBy(argument, queryBuilder);
-                                            },
-                                            argument.getArgument());
-                                }
-                            };
-                            process(expression.getArguments());
+                                bossExprToVeloxBy(argument, queryBuilder);
+                            }
                         },
                         [](auto /*args*/) { throw std::runtime_error("unexpected argument type"); }),
-                (Expression::SuperType const &) expression);
+                (Expression::SuperType &) expression);
     }
 
 // "Table"_("Column"_("Id"_, "List"_(1, 2, 3), "Column"_("Value"_ "List"_(0.1, 10.0, 5.2)))
     std::unordered_map<std::string, TypePtr> getColumns(
-            ComplexExpression const &expression, std::vector<RowVectorPtr> &rowDataVec, memory::MemoryPool *pool) {
+            ComplexExpression &expression, std::vector<RowVectorPtr> &rowDataVec, memory::MemoryPool *pool) {
         ExpressionArguments columns = std::move(expression).getArguments();
         std::vector<std::string> colNameVec;
         std::vector<std::vector<VectorPtr>> colDataListVec;
@@ -554,23 +538,24 @@ namespace boss::engines::velox {
                     auto columnType = colDataVec[0]->type();
                     colNameVec.emplace_back(columnName.getName());
                     fileColumnNamesMap.insert(std::make_pair(columnName.getName(), columnType));
-                    colDataListVec.emplace_back(colDataVec);
+                    colDataListVec.push_back(std::move(colDataVec));
                 });
 
         auto listSize = colDataListVec[0].size();
         for (auto i = 0; i < listSize; i++) {
             std::vector<VectorPtr> rowData;
             for (auto j = 0; j < columns.size(); j++) {
-                rowData.emplace_back(colDataListVec[j][i]);
+                assert(colDataListVec[j].size() == listSize);
+                rowData.push_back(std::move(colDataListVec[j][i]));
             }
             auto rowVector = makeRowVector(colNameVec, rowData, pool);
-            rowDataVec.emplace_back(rowVector);
+            rowDataVec.push_back(std::move(rowVector));
         }
 
         return fileColumnNamesMap;
     }
 
-    void bossExprToVelox(Expression const &expression, QueryBuilder &queryBuilder) {
+    void bossExprToVelox(Expression &expression, QueryBuilder &queryBuilder) {
         std::visit(
                 boss::utilities::overload(
                         [&](bool a) {
@@ -588,7 +573,7 @@ namespace boss::engines::velox {
                         },
                         [&](std::string const &a) {
                         },
-                        [&](ComplexExpression const &expression) {
+                        [&](ComplexExpression &expression) {
                             std::string projectionName;
                             auto headName = expression.getHead().getName();
 #ifdef DebugInfo
@@ -607,100 +592,86 @@ namespace boss::engines::velox {
                                                                                           queryBuilder.pool_.get());
                                 return;
                             }
-                            auto process = [&](auto const &arguments) {
-                                std::vector<std::string> lastProjectionsVec;
-                                if (headName ==
-                                    "As") { //save the latest ProjectionsVec to restore for AS - aggregation
-                                    lastProjectionsVec = queryBuilder.curVeloxExpr.projectionsVec;
-                                    queryBuilder.curVeloxExpr.projectionsVec.clear();
-                                }
-                                for (auto it = arguments.begin(); it != arguments.end(); ++it) {
-                                    auto const &argument = *it;
+
+                            std::vector<std::string> lastProjectionsVec;
+                            if (headName ==
+                                "As") { //save the latest ProjectionsVec to restore for AS - aggregation
+                                lastProjectionsVec = queryBuilder.curVeloxExpr.projectionsVec;
+                                queryBuilder.curVeloxExpr.projectionsVec.clear();
+                            }
+
+                            auto [head, statics, dynamics, oldSpans] = std::move(expression).decompose();
+
+                            auto it_start = std::move_iterator(dynamics.begin());
+                            auto it = std::move_iterator(dynamics.begin());
+                            for (; it != std::move_iterator(dynamics.end()); ++it) {
+                                auto argument = *it;
 #ifdef DebugInfo
-                                    std::cout << "argument  " << argument << endl;
+                                std::cout << "argument  " << argument << endl;
 #endif
-                                    auto toString = [](auto &&arg) {
-                                        std::stringstream out;
-                                        out << arg;
-                                        return out.str();
-                                    };
+                                auto toString = [](auto &&arg) {
+                                    std::stringstream out;
+                                    out << arg;
+                                    return out.str();
+                                };
 
-                                    if (headName == "Where") {
-                                        std::visit(
-                                                [&queryBuilder](auto &&argument) {
-                                                    return bossExprToVeloxFilter_Join(argument, queryBuilder);
-                                                },
-                                                argument.getArgument());
-                                        if (queryBuilder.curVeloxExpr.tmpFieldFiltersVec.size() > 0)
-                                            queryBuilder.formatVeloxFilter_Join();
-                                    } else if (headName == "As") {
-                                        if ((it - arguments.begin()) % 2 == 0) {
-                                            projectionName = toString(argument);
-                                        } else {
-                                            std::vector<std::string> projectionList;
-                                            std::visit(
-                                                    [&projectionList, &queryBuilder](auto &&argument) {
-                                                        return bossExprToVeloxProj_PartialAggr(argument,
-                                                                                               projectionList,
-                                                                                               queryBuilder);
-                                                    },
-                                                    argument.getArgument());
-
-                                            // fill the new name for aggregation
-                                            if (!queryBuilder.curVeloxExpr.aggregatesVec.empty()) {
-                                                auto &aggregation = queryBuilder.curVeloxExpr.aggregatesVec.back();
-                                                if (aggregation.newName == "") {
-                                                    aggregation.newName = projectionName;
-                                                    queryBuilder.curVeloxExpr.orderBy = true;
-                                                }
-                                                queryBuilder.curVeloxExpr.projectionsVec = lastProjectionsVec;
-                                            } else {
-                                                std::string projection;
-                                                if (projectionList[0] != projectionName)
-                                                    projection = fmt::format("{} AS {}", projectionList[0],
-                                                                             projectionName);
-                                                else
-                                                    projection = projectionList[0];
-                                                queryBuilder.curVeloxExpr.projectionsVec.push_back(projection);
-                                                // avoid repeated projectionMap
-                                                auto it = queryBuilder.projNameMap.find(projectionName);
-                                                if (it == queryBuilder.projNameMap.end())
-                                                    queryBuilder.projNameMap.emplace(projectionName, projectionList[0]);
-                                            }
-                                        }
-                                    } else if (headName == "By") {
-                                        std::visit(
-                                                [&queryBuilder](auto &&argument) {
-                                                    return bossExprToVeloxBy(argument, queryBuilder);
-                                                },
-                                                argument.getArgument());
-                                    } else if (headName == "Sum") {
-                                        auto aName = fmt::format("a{}", queryBuilder.aggrNameMap.size());
-                                        aggrPair aggregation;
-                                        aggregation.op = "sum";
-                                        aggregation.oldName = toString(argument);
-                                        aggregation.newName = aName;
-                                        queryBuilder.curVeloxExpr.aggregatesVec.push_back(aggregation);
-                                        // new implicit name for maybe later orderBy
-                                        queryBuilder.aggrNameMap.emplace(aggregation.oldName, aName);
-                                        queryBuilder.curVeloxExpr.orderBy = true;
-                                        if (std::find(queryBuilder.curVeloxExpr.selectedColumns.begin(),
-                                                      queryBuilder.curVeloxExpr.selectedColumns.end(),
-                                                      aggregation.oldName) ==
-                                            queryBuilder.curVeloxExpr.selectedColumns.end())
-                                            queryBuilder.curVeloxExpr.selectedColumns.push_back(aggregation.oldName);
+                                if (headName == "Where") {
+                                    bossExprToVeloxFilter_Join(argument, queryBuilder);
+                                    if (queryBuilder.curVeloxExpr.tmpFieldFiltersVec.size() > 0)
+                                        queryBuilder.formatVeloxFilter_Join();
+                                } else if (headName == "As") {
+                                    if ((it - it_start) % 2 == 0) {
+                                        projectionName = toString(argument);
                                     } else {
-                                        std::visit([&queryBuilder](auto &&argument) {
-                                                       return bossExprToVelox(argument, queryBuilder);
-                                                   },
-                                                   argument.getArgument());
+                                        std::vector<std::string> projectionList;
+                                        bossExprToVeloxProj_PartialAggr(argument, projectionList, queryBuilder);
+
+                                        // fill the new name for aggregation
+                                        if (!queryBuilder.curVeloxExpr.aggregatesVec.empty()) {
+                                            auto &aggregation = queryBuilder.curVeloxExpr.aggregatesVec.back();
+                                            if (aggregation.newName == "") {
+                                                aggregation.newName = projectionName;
+                                                queryBuilder.curVeloxExpr.orderBy = true;
+                                            }
+                                            queryBuilder.curVeloxExpr.projectionsVec = lastProjectionsVec;
+                                        } else {
+                                            std::string projection;
+                                            if (projectionList[0] != projectionName)
+                                                projection = fmt::format("{} AS {}", projectionList[0],
+                                                                         projectionName);
+                                            else
+                                                projection = projectionList[0];
+                                            queryBuilder.curVeloxExpr.projectionsVec.push_back(projection);
+                                            // avoid repeated projectionMap
+                                            auto it = queryBuilder.projNameMap.find(projectionName);
+                                            if (it == queryBuilder.projNameMap.end())
+                                                queryBuilder.projNameMap.emplace(projectionName, projectionList[0]);
+                                        }
                                     }
+                                } else if (headName == "By") {
+                                    bossExprToVeloxBy(argument, queryBuilder);
+                                } else if (headName == "Sum") {
+                                    auto aName = fmt::format("a{}", queryBuilder.aggrNameMap.size());
+                                    aggrPair aggregation;
+                                    aggregation.op = "sum";
+                                    aggregation.oldName = toString(argument);
+                                    aggregation.newName = aName;
+                                    queryBuilder.curVeloxExpr.aggregatesVec.push_back(aggregation);
+                                    // new implicit name for maybe later orderBy
+                                    queryBuilder.aggrNameMap.emplace(aggregation.oldName, aName);
+                                    queryBuilder.curVeloxExpr.orderBy = true;
+                                    if (std::find(queryBuilder.curVeloxExpr.selectedColumns.begin(),
+                                                  queryBuilder.curVeloxExpr.selectedColumns.end(),
+                                                  aggregation.oldName) ==
+                                        queryBuilder.curVeloxExpr.selectedColumns.end())
+                                        queryBuilder.curVeloxExpr.selectedColumns.push_back(aggregation.oldName);
+                                } else {
+                                    bossExprToVelox(argument, queryBuilder);
                                 }
-                            };
-                            process(expression.getArguments());
+                            }
                         },
                         [](auto /*args*/) { throw std::runtime_error("unexpected argument type"); }),
-                (Expression::SuperType const &) expression);
+                (Expression::SuperType &) expression);
     }
 
     boss::Expression Engine::evaluate(boss::Expression &&e) {
