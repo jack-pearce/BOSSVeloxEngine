@@ -440,7 +440,7 @@ namespace boss::engines::velox {
                         if (it == joinMapPlan.end()) {  // first time
                             joinMapPlan.emplace(tableName, 0xff);
                             build = tableMapPlan[tableIdx];
-                            outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].selectedColumns);
+                            outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
                         } else {
                             if (it->second == 0xff)
                                 build = tableMapPlan[tableIdx];
@@ -474,7 +474,7 @@ namespace boss::engines::velox {
                         if (it == joinMapPlan.end()) {  // first time
                             joinMapPlan.emplace(tableName, 0xff);
                             build = tableMapPlan[tableIdx];
-                            outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].selectedColumns);
+                            outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
                         } else {
                             if (it->second == 0xff)
                                 build = tableMapPlan[tableIdx];
@@ -558,7 +558,7 @@ namespace boss::engines::velox {
                         if (it == joinMapPlan.end()) {  // first time
                             joinMapPlan.emplace(tableName, 0xff);
                             build = tableMapPlan[tableIdx];
-                            outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].selectedColumns);
+                            outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
                         } else {
                             if (it->second == 0xff)
                                 build = tableMapPlan[tableIdx];
@@ -592,7 +592,7 @@ namespace boss::engines::velox {
                         if (it == joinMapPlan.end()) {  // first time
                             joinMapPlan.emplace(tableName, 0xff);
                             build = tableMapPlan[tableIdx];
-                            outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].selectedColumns);
+                            outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
                         } else {
                             if (it->second == 0xff)
                                 build = tableMapPlan[tableIdx];
@@ -681,6 +681,7 @@ namespace boss::engines::velox {
             auto planPtr = plan.planNode();
 
             outputLayout = planPtr->outputType()->names();
+            veloxExpr.outColumns = outputLayout;
             tableMapPlan.push_back(std::move(planPtr));
         }
 #ifdef DebugInfo

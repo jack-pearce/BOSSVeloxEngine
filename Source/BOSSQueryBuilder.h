@@ -100,6 +100,7 @@ namespace boss::engines::velox {
         bool orderBy = false;
         std::string tableName;
         std::vector<std::string> selectedColumns;
+        std::vector<std::string> outColumns;
         std::vector<FiledFilter> tmpFieldFiltersVec;
         std::vector<std::string> fieldFiltersVec;
         std::string remainingFilter;
@@ -118,6 +119,7 @@ namespace boss::engines::velox {
             orderBy = false;
             tableName.clear();
             selectedColumns.clear();
+            outColumns.clear();
             tmpFieldFiltersVec.clear();
             fieldFiltersVec.clear();
             remainingFilter.clear();

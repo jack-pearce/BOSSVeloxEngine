@@ -642,8 +642,14 @@ namespace boss::engines::velox {
                                             if (projectionList[0] != projectionName)
                                                 projection = fmt::format("{} AS {}", projectionList[0],
                                                                          projectionName);
-                                            else
-                                                projection = projectionList[0];
+                                            else {
+                                                auto it = queryBuilder.projNameMap.find(projectionName);
+                                                if (it != queryBuilder.projNameMap.end() && it->second != it->first) {
+                                                    auto tmp = fmt::format("{} AS {}", it->second, it->first);
+                                                    projection = tmp; // e.g. cal AS as
+                                                } else
+                                                    projection = projectionList[0];
+                                            }
                                             queryBuilder.curVeloxExpr.projectionsVec.push_back(projection);
                                             // avoid repeated projectionMap
                                             auto it = queryBuilder.projNameMap.find(projectionName);
