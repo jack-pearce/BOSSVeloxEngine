@@ -37,7 +37,9 @@ namespace boss::engines::velox {
             release = mockArrayRelease;
         }
 
-        explicit BossArray(BossArray &bossArray) noexcept {
+        BossArray(BossArray const &bossArray) noexcept = delete;
+
+        explicit BossArray(BossArray &&bossArray) noexcept {
             length = bossArray.length;
             buffers = bossArray.buffers;
             holdSpan = std::move(bossArray.holdSpan);
@@ -142,7 +144,7 @@ namespace boss::engines::velox {
         std::unordered_map<std::string, std::string> projNameMap;
         std::unordered_map<std::string, std::string> aggrNameMap;
         std::vector<std::unordered_map<std::string, TypePtr>> columnAliaseList;
-        std::shared_ptr<memory::MemoryPool> pool_{memory::getDefaultMemoryPool()};
+        static std::shared_ptr<memory::MemoryPool> pool_;
 
         void mergeGreaterFilter(FiledFilter input);
 

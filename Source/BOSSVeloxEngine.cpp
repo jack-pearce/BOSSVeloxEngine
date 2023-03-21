@@ -224,17 +224,19 @@ namespace boss::engines::velox {
         }
     }
 
-    ExpressionSpanArgument veloxtoSpan(const VectorPtr &vec) {
+    ExpressionSpanArgument veloxtoSpan(VectorPtr &&vec) {
         if ((vec->typeKind() == TypeKind::BIGINT) ||
             (vec->typeKind() == TypeKind::TINYINT) ||
             (vec->typeKind() == TypeKind::SMALLINT) ||
             (vec->typeKind() == TypeKind::INTEGER)) {
-            return boss::Span<const int64_t>(vec->values()->as<int64_t>(), vec->size(),
-                                             []() {});
+            auto const *data = vec->values()->as<int64_t>();
+            auto length = vec->size();
+            return boss::Span<const int64_t>(data, length, [v = std::move(vec)]() {});
         } else if ((vec->typeKind() == TypeKind::DOUBLE) ||
                    (vec->typeKind() == TypeKind::REAL)) {
-            return boss::Span<const double_t>(vec->values()->as<double_t>(), vec->size(),
-                                              []() {});
+            auto const *data = vec->values()->as<double_t>();
+            auto length = vec->size();
+            return boss::Span<const double_t>(data, length, [v = std::move(vec)]() {});
         } else {
             throw std::runtime_error("veloxToSpan: array type not supported");
         }
@@ -367,7 +369,7 @@ namespace boss::engines::velox {
                                 if (headName == "Greater")
                                     queryBuilder.mergeGreaterFilter(tmpFieldFilter);
                                 else if ((headName == "Equal" || headName == "StringContains") &&
-                                         tmpFieldFilter.element.size() > 0) {
+                                         !tmpFieldFilter.element.empty()) {
                                     queryBuilder.curVeloxExpr.tmpFieldFiltersVec.push_back(tmpFieldFilter);
                                 }
                             }
@@ -617,7 +619,7 @@ namespace boss::engines::velox {
 
                                 if (headName == "Where") {
                                     bossExprToVeloxFilter_Join(std::move(argument), queryBuilder);
-                                    if (queryBuilder.curVeloxExpr.tmpFieldFiltersVec.size() > 0)
+                                    if (!queryBuilder.curVeloxExpr.tmpFieldFiltersVec.empty())
                                         queryBuilder.formatVeloxFilter_Join();
                                 } else if (headName == "As") {
                                     if ((it - it_start) % 2 == 0) {
@@ -684,17 +686,17 @@ namespace boss::engines::velox {
             queryBuilder.getFileColumnNamesMap();
             queryBuilder.reformVeloxExpr();
             auto planPtr = queryBuilder.getVeloxPlanBuilder();
-            std::unique_ptr<TaskCursor> taskCursor;
+            static std::unique_ptr<TaskCursor> taskCursor;
             auto results = runQuery(planPtr, taskCursor);
-
+#ifdef DebugInfo
             printResults(results);
             std::cout << std::endl;
-
+#endif
             ExpressionSpanArguments newSpans;
-            if (results.size()) {
+            if (!results.empty()) {
                 for (int i = 0; i < results[0]->childrenSize(); ++i) {
                     for (int j = 0; j < results.size(); ++j) {
-                        newSpans.emplace_back(veloxtoSpan(results[j]->childAt(i)));
+                        newSpans.emplace_back(veloxtoSpan(std::move(results[j]->childAt(i))));
                     }
                 }
             }

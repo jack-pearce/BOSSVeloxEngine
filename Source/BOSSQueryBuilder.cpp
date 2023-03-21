@@ -14,7 +14,6 @@ namespace boss::engines::velox {
 // and the shared_ptr deleters should run the release procedures if no one
 // else is referencing the objects.
     struct BufferViewReleaser {
-        BufferViewReleaser() : BufferViewReleaser(nullptr) {}
 
         explicit BufferViewReleaser(
                 std::shared_ptr<BossArray> bossArray)
@@ -30,11 +29,11 @@ namespace boss::engines::velox {
 
 // Wraps a naked pointer using a Velox buffer view, without copying it. Adding a
 // dummy releaser as the buffer lifetime is fully controled by the client of the API.
-    BufferPtr wrapInBufferViewAsViewer(const void *buffer, size_t length) {
+    /*BufferPtr wrapInBufferViewAsViewer(const void *buffer, size_t length) {
         static const BufferViewReleaser kViewerReleaser;
         return BufferView<BufferViewReleaser>::create(
                 static_cast<const uint8_t *>(buffer), length, kViewerReleaser);
-    }
+    }*/
 
     // Wraps a naked pointer using a Velox buffer view, without copying it. This
     // buffer view uses shared_ptr to manage reference counting and releasing for
@@ -44,7 +43,7 @@ namespace boss::engines::velox {
             size_t length,
             std::shared_ptr<BossArray> arrayReleaser) {
         return BufferView<BufferViewReleaser>::create(
-                static_cast<const uint8_t *>(buffer), length, {std::move(BufferViewReleaser(arrayReleaser))});
+                static_cast<const uint8_t *>(buffer), length, {BufferViewReleaser(arrayReleaser)});
     }
 
     using WrapInBufferViewFunc =
@@ -92,8 +91,7 @@ namespace boss::engines::velox {
     VectorPtr importFromBossImpl(
             BossType bossType,
             BossArray &bossArray,
-            memory::MemoryPool *pool,
-            WrapInBufferViewFunc wrapInBufferView) {
+            memory::MemoryPool *pool) {
         VELOX_USER_CHECK_NOT_NULL(bossArray.release, "bossArray was released.");
         VELOX_CHECK_GE(bossArray.length, 0, "Array length needs to be non-negative.");
 
@@ -111,8 +109,10 @@ namespace boss::engines::velox {
                 type->toString());
 
         // Wrap the values buffer into a Velox BufferView - zero-copy.
-        auto values = wrapInBufferView(
-                bossArray.buffers, bossArray.length * type->cppSizeInBytes());
+        auto buffer = bossArray.buffers;
+        auto length = bossArray.length * type->cppSizeInBytes();
+        std::shared_ptr<BossArray> arrayReleaser(new BossArray(std::move(bossArray)));
+        auto values = wrapInBufferViewAsOwner(buffer, length, arrayReleaser);
 
         return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
                 createFlatVector,
@@ -124,29 +124,22 @@ namespace boss::engines::velox {
                 values);
     }
 
-    VectorPtr importFromBossAsViewer(
+    /*VectorPtr importFromBossAsViewer(
             BossType bossType,
             BossArray &bossArray,
             memory::MemoryPool *pool) {
         return importFromBossImpl(
                 bossType, bossArray, pool, wrapInBufferViewAsViewer);
-    }
+    }*/
 
     VectorPtr importFromBossAsOwner(
             BossType bossType,
             BossArray &bossArray,
             memory::MemoryPool *pool) {
 
-        std::shared_ptr<BossArray> arrayReleaser(new BossArray(bossArray));
+        VectorPtr imported = importFromBossImpl(bossType, bossArray, pool);
 
-        VectorPtr imported = importFromBossImpl(
-                bossType, bossArray, pool,
-                [&arrayReleaser](const void *buffer, size_t length) {
-                    return wrapInBufferViewAsOwner(
-                            buffer, length, arrayReleaser);
-                });
-
-        bossArray.release = nullptr;
+//        bossArray.release = nullptr;
 
         return imported;
     }
@@ -397,6 +390,8 @@ namespace boss::engines::velox {
             }
         }
     }
+
+    std::shared_ptr<memory::MemoryPool> QueryBuilder::pool_ = memory::getDefaultMemoryPool();
 
     core::PlanNodePtr QueryBuilder::getVeloxPlanBuilder() {
         auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
@@ -688,7 +683,9 @@ namespace boss::engines::velox {
             outputLayout = planPtr->outputType()->names();
             tableMapPlan.push_back(std::move(planPtr));
         }
+#ifdef DebugInfo
         std::cout << "VeloxPlanBuilder Finished." << std::endl;
+#endif
         return tableMapPlan.back();
     }
 
