@@ -305,7 +305,7 @@ namespace boss::engines::velox {
                         auto tmp = fmt::format("{} = {}", filter.element[0].data, filter.element[1].data);
                         curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
                     }
-                } else if (filter.opName == "StringContains") {
+                } else if (filter.opName == "StringContainsQ") {
                     auto length = filter.element[1].data.size();
                     auto tmp = fmt::format("{} like '%{}%'", filter.element[0].data,
                                            filter.element[1].data.substr(1, length - 2));
@@ -345,7 +345,7 @@ namespace boss::engines::velox {
                         auto tmp = fmt::format("{} = {}", filter.element[0].data, filter.element[1].data);
                         curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
                     }
-                } else if (filter.opName == "StringContains") {
+                } else if (filter.opName == "StringContainsQ") {
                     auto length = filter.element[1].data.size();
                     auto tmp = fmt::format("{} like '%{}%'", filter.element[0].data,
                                            filter.element[1].data.substr(1, length - 2));
@@ -404,6 +404,17 @@ namespace boss::engines::velox {
 
             auto plan = PlanBuilder(planNodeIdGenerator)
                     .values(veloxExpr.rowDataVec);
+
+            // nothing happened for a table, projection for all columns
+            if (veloxExpr.selectedColumns.empty()) {
+                assert(veloxExpr.projectionsVec.empty());
+                std::for_each(fileColumnNames.begin(),
+                              fileColumnNames.end(),
+                              [&veloxExpr](auto &&p) {
+                                  veloxExpr.selectedColumns.push_back(p.first);
+                              });
+                veloxExpr.projectionsVec = veloxExpr.selectedColumns;
+            }
 
             if (veloxExpr.fieldFiltersVec.size() > 0) {
                 auto filtersCnt = 0;

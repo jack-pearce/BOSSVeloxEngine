@@ -243,7 +243,7 @@ namespace boss::engines::velox {
     }
 
     bool cmpFunCheck(std::string input) {
-        static std::vector<std::string> cmpFun{"Greater", "Equal", "StringContains"};
+        static std::vector<std::string> cmpFun{"Greater", "Equal", "StringContainsQ"};
         for (int i = 0; i < cmpFun.size(); i++) {
             if (input == cmpFun[i]) {
                 return 1;
@@ -368,7 +368,7 @@ namespace boss::engines::velox {
                             if (!tmpFieldFilter.opName.empty()) { // field filter or join op post-process
                                 if (headName == "Greater")
                                     queryBuilder.mergeGreaterFilter(tmpFieldFilter);
-                                else if ((headName == "Equal" || headName == "StringContains") &&
+                                else if ((headName == "Equal" || headName == "StringContainsQ") &&
                                          !tmpFieldFilter.element.empty()) {
                                     queryBuilder.curVeloxExpr.tmpFieldFiltersVec.push_back(tmpFieldFilter);
                                 }
