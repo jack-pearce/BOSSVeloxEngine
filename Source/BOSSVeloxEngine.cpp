@@ -3,6 +3,7 @@
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/TypeResolver.h"
+#include "velox/exec/PlanNodeStats.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::core;
@@ -687,16 +688,22 @@ namespace boss::engines::velox {
         tmpFieldFilter.clear();
         tmpJoinPairList.clear();
         QueryBuilder queryBuilder;
+        static std::unique_ptr<TaskCursor> taskCursor;
         bossExprToVelox(std::move(e), queryBuilder);
         if (queryBuilder.tableCnt) {
             queryBuilder.getFileColumnNamesMap();
             queryBuilder.reformVeloxExpr();
             auto planPtr = queryBuilder.getVeloxPlanBuilder();
-            static std::unique_ptr<TaskCursor> taskCursor;
             auto results = runQuery(planPtr, taskCursor);
+            if (!taskCursor) {
+                throw std::runtime_error("Query terminated with error");
+            }
 #ifdef DebugInfo
             printResults(results);
             std::cout << std::endl;
+            auto task = taskCursor->task();
+            const auto stats = task->taskStats();
+            std::cout << printPlanWithStats(*planPtr, stats, false) << std::endl;
 #endif
             ExpressionSpanArguments newSpans;
             if (!results.empty()) {
