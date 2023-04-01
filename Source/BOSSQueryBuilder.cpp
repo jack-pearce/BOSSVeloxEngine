@@ -415,6 +415,8 @@ namespace boss::engines::velox {
                               });
                 veloxExpr.projectionsVec = veloxExpr.selectedColumns;
             }
+            //project involved columns only
+            plan.project(veloxExpr.selectedColumns);
 
             if (veloxExpr.fieldFiltersVec.size() > 0) {
                 auto filtersCnt = 0;

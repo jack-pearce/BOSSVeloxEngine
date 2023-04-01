@@ -285,8 +285,6 @@ namespace boss::engines::velox {
                             element.type = cValue;
                             tmpFieldFilter.element.emplace_back(element);
                         },
-                        [&](std::vector<bool>::reference a) {
-                        },
                         [&](char const *a) {
                             AtomicExpr element;
                             element.data = a;
@@ -393,8 +391,6 @@ namespace boss::engines::velox {
                         [&](auto a) {
                             projectionList.push_back(to_string(a));
                         },
-                        [&](std::vector<bool>::reference a) {
-                        },
                         [&](char const *a) {
                             projectionList.push_back(a);
                         },
@@ -460,8 +456,6 @@ namespace boss::engines::velox {
     void bossExprToVeloxBy(Expression &&expression, QueryBuilder &queryBuilder) {
         std::visit(
                 boss::utilities::overload(
-                        [&](char const *a) {
-                        },
                         [&](Symbol const &a) {
                             if (queryBuilder.curVeloxExpr.orderBy) {
                                 if (!strcasecmp(a.getName().c_str(), "desc")) {
@@ -481,8 +475,6 @@ namespace boss::engines::velox {
                                     queryBuilder.curVeloxExpr.selectedColumns.push_back(a.getName());
                                 queryBuilder.curVeloxExpr.groupingKeysVec.push_back(a.getName());
                             }
-                        },
-                        [&](std::string const &a) {
                         },
                         [&](ComplexExpression &&expression) {
                             auto headName = expression.getHead().getName();
@@ -561,20 +553,8 @@ namespace boss::engines::velox {
     void bossExprToVelox(Expression &&expression, QueryBuilder &queryBuilder) {
         std::visit(
                 boss::utilities::overload(
-                        [&](bool a) {
-                        },
-                        [&](std::vector<bool>::reference a) {
-                        },
                         [&](std::int64_t a) {
                             queryBuilder.curVeloxExpr.limit = a;
-                        },
-                        [&](char const *a) {
-                        },
-                        [&](std::double_t a) {
-                        },
-                        [](Symbol const &a) {
-                        },
-                        [&](std::string const &a) {
                         },
                         [&](ComplexExpression &&expression) {
                             std::string projectionName;
