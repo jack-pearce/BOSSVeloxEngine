@@ -147,6 +147,8 @@ namespace boss::engines::velox {
         std::unordered_map<std::string, std::string> aggrNameMap;
         std::vector<std::unordered_map<std::string, TypePtr>> columnAliaseList;
         static std::shared_ptr<memory::MemoryPool> pool_;
+        FiledFilter tmpFieldFilter;
+        JoinPairList tmpJoinPairList;
 
         void mergeGreaterFilter(FiledFilter input);
 
@@ -163,8 +165,7 @@ namespace boss::engines::velox {
 
     VectorPtr importFromBossAsOwner(BossType bossType, BossArray &bossArray, memory::MemoryPool *pool);
 
-    std::vector<RowVectorPtr> runQuery(const std::shared_ptr<const core::PlanNode> &planNode,
-                                       std::unique_ptr<TaskCursor> &taskCursor);
+    std::vector<RowVectorPtr> runQuery(const CursorParameters &params, std::unique_ptr<TaskCursor> &cursor);
 
     void printResults(const std::vector<RowVectorPtr> &results);
 

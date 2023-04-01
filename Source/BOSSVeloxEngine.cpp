@@ -107,8 +107,6 @@ namespace boss::engines::velox {
     };
 
     static SpanReferenceCounter spanReferenceCounter;
-    static FiledFilter tmpFieldFilter;
-    static JoinPairList tmpJoinPairList;
 
     int64_t dateToInt64(std::string str) {
         std::istringstream iss;
@@ -283,13 +281,13 @@ namespace boss::engines::velox {
                             AtomicExpr element;
                             element.data = to_string(a);
                             element.type = cValue;
-                            tmpFieldFilter.element.emplace_back(element);
+                            queryBuilder.tmpFieldFilter.element.emplace_back(element);
                         },
                         [&](char const *a) {
                             AtomicExpr element;
                             element.data = a;
                             element.type = cValue;
-                            tmpFieldFilter.element.emplace_back(element);
+                            queryBuilder.tmpFieldFilter.element.emplace_back(element);
                         },
                         [&](Symbol const &a) {
                             if (std::find(queryBuilder.curVeloxExpr.selectedColumns.begin(),
@@ -299,13 +297,13 @@ namespace boss::engines::velox {
                             AtomicExpr element;
                             element.data = a.getName();
                             element.type = cName;
-                            tmpFieldFilter.element.emplace_back(element);
+                            queryBuilder.tmpFieldFilter.element.emplace_back(element);
                         },
                         [&](std::string const &a) {
                             AtomicExpr element;
                             element.data = "'" + a + "'";
                             element.type = cValue;
-                            tmpFieldFilter.element.emplace_back(element);
+                            queryBuilder.tmpFieldFilter.element.emplace_back(element);
                         },
                         [&](ComplexExpression &&expression) {
                             auto headName = expression.getHead().getName();
@@ -313,8 +311,8 @@ namespace boss::engines::velox {
                             std::cout << "headName  " << headName << endl;
 #endif
                             if (cmpFunCheck(headName)) { // field filter or join op pre-process
-                                tmpFieldFilter.clear();
-                                tmpFieldFilter.opName = headName;
+                                queryBuilder.tmpFieldFilter.clear();
+                                queryBuilder.tmpFieldFilter.opName = headName;
                             }
 
                             auto [head, statics, dynamics, oldSpans] = std::move(expression).decompose();
@@ -333,10 +331,10 @@ namespace boss::engines::velox {
                                                   queryBuilder.curVeloxExpr.selectedColumns.end(), // avoid repeated selectedColumns
                                                   tmpArhStr) == queryBuilder.curVeloxExpr.selectedColumns.end())
                                         queryBuilder.curVeloxExpr.selectedColumns.push_back(tmpArhStr);
-                                    if (!tmpJoinPairList.leftFlag)
-                                        tmpJoinPairList.leftKeys.emplace_back(tmpArhStr);
+                                    if (!queryBuilder.tmpJoinPairList.leftFlag)
+                                        queryBuilder.tmpJoinPairList.leftKeys.emplace_back(tmpArhStr);
                                     else
-                                        tmpJoinPairList.rightKeys.emplace_back(tmpArhStr);
+                                        queryBuilder.tmpJoinPairList.rightKeys.emplace_back(tmpArhStr);
                                     continue;
                                 }
 
@@ -348,7 +346,7 @@ namespace boss::engines::velox {
                                     AtomicExpr element;
                                     element.data = to_string(dateInt64);
                                     element.type = cValue;
-                                    tmpFieldFilter.element.emplace_back(element);
+                                    queryBuilder.tmpFieldFilter.element.emplace_back(element);
                                     continue;
                                 }
                                 if (tmpArhStr.substr(0, 4) == "Date") {
@@ -358,26 +356,26 @@ namespace boss::engines::velox {
                                     AtomicExpr element;
                                     element.data = to_string(dateInt64);
                                     element.type = cValue;
-                                    tmpFieldFilter.element.emplace_back(element);
+                                    queryBuilder.tmpFieldFilter.element.emplace_back(element);
                                     continue;
                                 }
 
                                 bossExprToVeloxFilter_Join(std::move(argument), queryBuilder);
                             }
-                            if (!tmpFieldFilter.opName.empty()) { // field filter or join op post-process
+                            if (!queryBuilder.tmpFieldFilter.opName.empty()) { // field filter or join op post-process
                                 if (headName == "Greater")
-                                    queryBuilder.mergeGreaterFilter(tmpFieldFilter);
+                                    queryBuilder.mergeGreaterFilter(queryBuilder.tmpFieldFilter);
                                 else if ((headName == "Equal" || headName == "StringContainsQ") &&
-                                         !tmpFieldFilter.element.empty()) {
-                                    queryBuilder.curVeloxExpr.tmpFieldFiltersVec.push_back(tmpFieldFilter);
+                                         !queryBuilder.tmpFieldFilter.element.empty()) {
+                                    queryBuilder.curVeloxExpr.tmpFieldFiltersVec.push_back(queryBuilder.tmpFieldFilter);
                                 }
                             }
                             if (headName == "List") {
-                                if (!tmpJoinPairList.leftFlag)
-                                    tmpJoinPairList.leftFlag = true;
+                                if (!queryBuilder.tmpJoinPairList.leftFlag)
+                                    queryBuilder.tmpJoinPairList.leftFlag = true;
                                 else {
-                                    queryBuilder.curVeloxExpr.hashJoinListVec.push_back(tmpJoinPairList);
-                                    tmpJoinPairList.clear();
+                                    queryBuilder.curVeloxExpr.hashJoinListVec.push_back(queryBuilder.tmpJoinPairList);
+                                    queryBuilder.tmpJoinPairList.clear();
                                 }
                             }
                         }),
@@ -665,23 +663,21 @@ namespace boss::engines::velox {
     }
 
     boss::Expression Engine::evaluate(boss::Expression &&e) {
-        tmpFieldFilter.clear();
-        tmpJoinPairList.clear();
         QueryBuilder queryBuilder;
-        static std::unique_ptr<TaskCursor> taskCursor;
         bossExprToVelox(std::move(e), queryBuilder);
         if (queryBuilder.tableCnt) {
             queryBuilder.getFileColumnNamesMap();
             queryBuilder.reformVeloxExpr();
             auto planPtr = queryBuilder.getVeloxPlanBuilder();
-            auto results = runQuery(planPtr, taskCursor);
-            if (!taskCursor) {
+            params.planNode = planPtr;
+            auto results = runQuery(params, cursor);
+            if (!cursor) {
                 throw std::runtime_error("Query terminated with error");
             }
 #ifdef DebugInfo
             printResults(results);
             std::cout << std::endl;
-            auto task = taskCursor->task();
+            auto task = cursor->task();
             const auto stats = task->taskStats();
             std::cout << printPlanWithStats(*planPtr, stats, false) << std::endl;
 #endif
@@ -708,6 +704,9 @@ static auto &enginePtr(bool initialise = true) {
     static auto engine = std::unique_ptr<boss::engines::velox::Engine>();
     if (!engine && initialise) {
         engine.reset(new boss::engines::velox::Engine());
+        engine->executor_ = std::make_shared<folly::CPUThreadPoolExecutor>(
+                std::thread::hardware_concurrency());
+        engine->params.queryCtx = std::make_shared<core::QueryCtx>(engine->executor_.get());
         functions::prestosql::registerAllScalarFunctions();
         aggregate::prestosql::registerAllAggregateFunctions();
         parse::registerTypeResolver();

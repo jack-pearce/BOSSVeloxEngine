@@ -144,20 +144,13 @@ namespace boss::engines::velox {
         return imported;
     }
 
-    /// Run a given planNode
-    /// \param planNode
-    /// \param [out] taskCursor a reference to the execution context.
-    /// \return list of  Row vector
-    std::vector<RowVectorPtr> runQuery(const std::shared_ptr<const core::PlanNode> &planNode,
-                                       std::unique_ptr<TaskCursor> &taskCursor) {
-        CursorParameters params;
-        params.planNode = planNode;
+    std::vector<RowVectorPtr> runQuery(const CursorParameters &params, std::unique_ptr<TaskCursor> &cursor) {
 
-        taskCursor = std::make_unique<TaskCursor>(params);
+        cursor = std::make_unique<TaskCursor>(params);
 
         std::vector<RowVectorPtr> actualResults;
-        while (taskCursor->moveNext()) {
-            actualResults.push_back(taskCursor->current());
+        while (cursor->moveNext()) {
+            actualResults.push_back(cursor->current());
         };
         return actualResults;
     }
