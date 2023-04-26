@@ -734,13 +734,13 @@ namespace boss::engines::velox {
             if (!cursor) {
                 throw std::runtime_error("Query terminated with error");
             }
-//#ifdef DebugInfo
+#ifdef DebugInfo
             printResults(results);
             std::cout << std::endl;
             auto task = cursor->task();
             const auto stats = task->taskStats();
-//            std::cout << printPlanWithStats(*planPtr, stats, false) << std::endl;
-//#endif
+            std::cout << printPlanWithStats(*planPtr, stats, false) << std::endl;
+#endif
             ExpressionSpanArguments newSpans;
             if (!results.empty()) {
                 for (int i = 0; i < results[0]->childrenSize(); ++i) {
