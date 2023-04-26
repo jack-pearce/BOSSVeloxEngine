@@ -113,6 +113,7 @@ namespace boss::engines::velox {
         std::string filter;  // can be used to filter non-field clause
         std::vector<RowVectorPtr> rowDataVec;
         std::unordered_map<std::string, TypePtr> fileColumnNamesMap;
+        std::vector<BufferPtr> indicesVec;
 
         void clear() {
             limit = 0;
@@ -131,6 +132,7 @@ namespace boss::engines::velox {
             hashJoinListVec.clear();
             filter.clear();
             rowDataVec.clear();
+            indicesVec.clear();
         }
     };
 
@@ -164,6 +166,8 @@ namespace boss::engines::velox {
     VectorPtr importFromBossAsViewer(BossType bossType, BossArray &bossArray, memory::MemoryPool *pool);
 
     VectorPtr importFromBossAsOwner(BossType bossType, BossArray &bossArray, memory::MemoryPool *pool);
+
+    BufferPtr importFromBossAsOwnerBuffer(BossArray &bossArray);
 
     std::vector<RowVectorPtr> runQuery(const CursorParameters &params, std::unique_ptr<TaskCursor> &cursor);
 

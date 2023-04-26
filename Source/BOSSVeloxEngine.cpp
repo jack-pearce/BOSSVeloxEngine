@@ -214,12 +214,24 @@ namespace boss::engines::velox {
     }
 
     template<typename T>
-    VectorPtr spanToVelox(boss::Span<T> &&span, memory::MemoryPool *pool) {
+    VectorPtr spanToVelox(boss::Span<T> &&span, memory::MemoryPool *pool, BufferPtr indices = nullptr) {
         BossArray bossArray(span.size(), span.begin(), std::move(span));
+        auto createDictVector = [](BufferPtr indices, auto flatVecPtr) {
+            auto indicesSize = indices->size() / 4;
+            return BaseVector::wrapInDictionary(
+                    BufferPtr(nullptr), indices, indicesSize, std::move(flatVecPtr));
+        };
+
         if constexpr (std::is_same_v<T, int64_t>) {
-            return importFromBossAsOwner(BossType::bBIGINT, bossArray, pool);
+            auto flatVecPtr = importFromBossAsOwner(BossType::bBIGINT, bossArray, pool);
+            if (indices == nullptr)
+                return flatVecPtr;
+            return createDictVector(indices, flatVecPtr);
         } else if constexpr (std::is_same_v<T, double_t>) {
-            return importFromBossAsOwner(BossType::bDOUBLE, bossArray, pool);
+            auto flatVecPtr = importFromBossAsOwner(BossType::bDOUBLE, bossArray, pool);
+            if (indices == nullptr)
+                return flatVecPtr;
+            return createDictVector(indices, flatVecPtr);
         }
     }
 
@@ -495,7 +507,8 @@ namespace boss::engines::velox {
 
 // "Table"_("Column"_("Id"_, "List"_(1, 2, 3), "Column"_("Value"_ "List"_(0.1, 10.0, 5.2)))
     std::unordered_map<std::string, TypePtr> getColumns(
-            ComplexExpression &&expression, std::vector<RowVectorPtr> &rowDataVec, memory::MemoryPool *pool) {
+            ComplexExpression &&expression, std::vector<BufferPtr> indicesVec,
+            std::vector<RowVectorPtr> &rowDataVec, memory::MemoryPool *pool) {
         ExpressionArguments columns = std::move(expression).getArguments();
         std::vector<std::string> colNameVec;
         std::vector<std::vector<VectorPtr>> colDataListVec;
@@ -503,7 +516,7 @@ namespace boss::engines::velox {
 
         std::for_each(
                 std::make_move_iterator(columns.begin()), std::make_move_iterator(columns.end()),
-                [&colNameVec, &colDataListVec, pool, &fileColumnNamesMap](
+                [&colNameVec, &colDataListVec, pool, &fileColumnNamesMap, indicesVec](
                         auto &&columnExpr) {
                     auto column = get < ComplexExpression > (std::forward<decltype(columnExpr)>(columnExpr));
                     auto [head, unused_, dynamics, spans] = std::move(column).decompose();
@@ -515,12 +528,17 @@ namespace boss::engines::velox {
                         return;
                     }
 
+                    int numSpan = 0;
                     std::vector<VectorPtr> colDataVec;
                     for (auto &subSpan: listSpans) {
+                        BufferPtr indices = nullptr;
+                        if (indicesVec.size() > 0) {
+                            indices = indicesVec[numSpan++];
+                        }
                         VectorPtr subColData = std::visit(
-                                [pool]<typename T>(boss::Span<T> &&typedSpan) -> VectorPtr {
+                                [pool, indices]<typename T>(boss::Span<T> &&typedSpan) -> VectorPtr {
                                     if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, double_t>) {
-                                        return spanToVelox<T>(std::move(typedSpan), pool);
+                                        return spanToVelox<T>(std::move(typedSpan), pool, indices);
                                     } else {
                                         throw std::runtime_error("unsupported column type in Select");
                                     }
@@ -548,6 +566,38 @@ namespace boss::engines::velox {
         return fileColumnNamesMap;
     }
 
+    std::vector<BufferPtr> getIndices(ComplexExpression &&dynamic, memory::MemoryPool *pool) {
+        auto list = transformDynamicsToSpans(std::move(dynamic));
+        auto [listHead, listUnused_, listDynamics, listSpans] = std::move(list).decompose();
+        if (listSpans.empty()) {
+            throw std::runtime_error("get index error");
+        }
+
+        std::vector<BufferPtr> indicesVec;
+        for (auto &subSpan: listSpans) {
+            BufferPtr indexData = std::visit(
+                    [pool]<typename T>(boss::Span<T> &&typedSpan) -> BufferPtr {
+                        if constexpr (std::is_same_v<T, int64_t>) {
+                            auto size = typedSpan.size();
+                            BufferPtr bufferPtr = AlignedBuffer::allocate<vector_size_t>(size, pool);
+                            vector_size_t *arr = bufferPtr->asMutable<vector_size_t>();
+                            bufferPtr->setSize(size * 4);
+                            for (int i = 0; i < size; i++) {
+                                arr[i] = typedSpan.at(i);
+                            }
+                            return bufferPtr;
+                            BossArray bossIndices(typedSpan.size(), typedSpan.begin(), std::move(typedSpan));
+                            return importFromBossAsOwnerBuffer(bossIndices);
+                        } else {
+                            throw std::runtime_error("index type error");
+                        }
+                    },
+                    std::move(subSpan));
+            indicesVec.push_back(std::move(indexData));
+        }
+        return indicesVec;
+    }
+
     void bossExprToVelox(Expression &&expression, QueryBuilder &queryBuilder) {
         std::visit(
                 boss::utilities::overload(
@@ -569,6 +619,7 @@ namespace boss::engines::velox {
                                 queryBuilder.curVeloxExpr.tableName = fmt::format("Table{}",
                                                                                   queryBuilder.tableCnt++); // indicate table names
                                 queryBuilder.curVeloxExpr.fileColumnNamesMap = getColumns(std::move(expression),
+                                                                                          queryBuilder.curVeloxExpr.indicesVec,
                                                                                           queryBuilder.curVeloxExpr.rowDataVec,
                                                                                           queryBuilder.pool_.get());
                                 return;
@@ -585,6 +636,15 @@ namespace boss::engines::velox {
 
                             auto it_start = std::move_iterator(dynamics.begin());
                             auto it = std::move_iterator(dynamics.begin());
+
+                            if (headName == "Gather") {
+                                auto dynamic = get < ComplexExpression > (std::move(dynamics.at(1)));
+                                queryBuilder.curVeloxExpr.indicesVec = getIndices(std::move(dynamic),
+                                                                                  queryBuilder.pool_.get());
+                                bossExprToVelox(std::move(*it_start), queryBuilder);
+                                return;
+                            }
+
                             for (; it != std::move_iterator(dynamics.end()); ++it) {
                                 auto argument = *it;
 #ifdef DebugInfo
@@ -674,13 +734,13 @@ namespace boss::engines::velox {
             if (!cursor) {
                 throw std::runtime_error("Query terminated with error");
             }
-#ifdef DebugInfo
+//#ifdef DebugInfo
             printResults(results);
             std::cout << std::endl;
             auto task = cursor->task();
             const auto stats = task->taskStats();
-            std::cout << printPlanWithStats(*planPtr, stats, false) << std::endl;
-#endif
+//            std::cout << printPlanWithStats(*planPtr, stats, false) << std::endl;
+//#endif
             ExpressionSpanArguments newSpans;
             if (!results.empty()) {
                 for (int i = 0; i < results[0]->childrenSize(); ++i) {

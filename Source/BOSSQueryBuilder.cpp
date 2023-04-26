@@ -144,6 +144,18 @@ namespace boss::engines::velox {
         return imported;
     }
 
+    BufferPtr importFromBossAsOwnerBuffer(BossArray &bossArray) {
+        VELOX_USER_CHECK_NOT_NULL(bossArray.release, "bossArray was released.");
+        VELOX_CHECK_GE(bossArray.length, 0, "Array length needs to be non-negative.");
+
+        // Wrap the values buffer into a Velox BufferView - zero-copy.
+        auto buffer = bossArray.buffers;
+        auto length = bossArray.length * 4;
+        std::shared_ptr<BossArray> arrayReleaser(new BossArray(std::move(bossArray)));
+        auto values = wrapInBufferViewAsOwner(buffer, length, arrayReleaser);
+        return values;
+    }
+
     std::vector<RowVectorPtr> runQuery(const CursorParameters &params, std::unique_ptr<TaskCursor> &cursor) {
 
         cursor = std::make_unique<TaskCursor>(params);
