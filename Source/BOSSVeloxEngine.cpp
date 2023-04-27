@@ -57,7 +57,7 @@ namespace boss {
     using std::vector;
 //    using SpanInputs = std::variant<vector<bool>, vector<std::int64_t>, vector<std::double_t>,
 //            vector<std::string>, vector<Symbol>>;
-    using SpanInputs = std::variant</*vector<bool>, */vector<std::int64_t>, vector<std::double_t>,
+    using SpanInputs = std::variant</*vector<bool>, */ std::vector<std::int32_t>, vector<std::int64_t>, vector<std::double_t>,
             vector<std::string>, vector<Symbol>>;
 } // namespace boss
 
@@ -222,7 +222,12 @@ namespace boss::engines::velox {
                     BufferPtr(nullptr), indices, indicesSize, std::move(flatVecPtr));
         };
 
-        if constexpr (std::is_same_v<T, int64_t>) {
+        if constexpr (std::is_same_v<T, int32_t>) {
+            auto flatVecPtr = importFromBossAsOwner(BossType::bINTEGER, bossArray, pool);
+            if (indices == nullptr)
+                return flatVecPtr;
+            return createDictVector(indices, flatVecPtr);
+        } else if constexpr (std::is_same_v<T, int64_t>) {
             auto flatVecPtr = importFromBossAsOwner(BossType::bBIGINT, bossArray, pool);
             if (indices == nullptr)
                 return flatVecPtr;
@@ -236,20 +241,21 @@ namespace boss::engines::velox {
     }
 
     ExpressionSpanArgument veloxtoSpan(VectorPtr &&vec) {
-        if ((vec->typeKind() == TypeKind::BIGINT) ||
-            (vec->typeKind() == TypeKind::TINYINT) ||
-            (vec->typeKind() == TypeKind::SMALLINT) ||
-            (vec->typeKind() == TypeKind::INTEGER)) {
+        if (vec->typeKind() == TypeKind::INTEGER) {
+            auto const *data = vec->values()->as<int32_t>();
+            auto length = vec->size();
+            return boss::Span<const int32_t>(data, length, [v = std::move(vec)]() {});
+        } else if (vec->typeKind() == TypeKind::BIGINT) {
             auto const *data = vec->values()->as<int64_t>();
             auto length = vec->size();
             return boss::Span<const int64_t>(data, length, [v = std::move(vec)]() {});
-        } else if ((vec->typeKind() == TypeKind::DOUBLE) ||
-                   (vec->typeKind() == TypeKind::REAL)) {
+        } else if (vec->typeKind() == TypeKind::DOUBLE) {
             auto const *data = vec->values()->as<double_t>();
             auto length = vec->size();
             return boss::Span<const double_t>(data, length, [v = std::move(vec)]() {});
         } else {
-            throw std::runtime_error("veloxToSpan: array type not supported");
+            throw std::runtime_error(
+                    "veloxToSpan: array type not supported: " + facebook::velox::mapTypeKindToName(vec->typeKind()));
         }
     }
 
@@ -452,7 +458,9 @@ namespace boss::engines::velox {
                                 if (headName == "Year") {
 //                              auto out = fmt::format("year({})", projectionList.back());
                                     // Date type has already been treated as int64
-                                    auto out = projectionList.back();
+                                    auto out = fmt::format(
+                                            "cast(((cast({} AS DOUBLE) + 719563.285) / 365.265) AS BIGINT)",
+                                            projectionList.back());
                                     projectionList.pop_back();
                                     projectionList.pop_back();
                                     projectionList.push_back(out);
@@ -539,7 +547,8 @@ namespace boss::engines::velox {
                         }
                         VectorPtr subColData = std::visit(
                                 [pool, indices]<typename T>(boss::Span<T> &&typedSpan) -> VectorPtr {
-                                    if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, double_t>) {
+                                    if constexpr (std::is_same_v<T, int32_t> || std::is_same_v<T, int64_t> ||
+                                                  std::is_same_v<T, double_t>) {
                                         return spanToVelox<T>(std::move(typedSpan), pool, indices);
                                     } else {
                                         throw std::runtime_error("unsupported column type in Select");
@@ -577,15 +586,7 @@ namespace boss::engines::velox {
         for (auto &subSpan: listSpans) {
             BufferPtr indexData = std::visit(
                     [pool]<typename T>(boss::Span<T> &&typedSpan) -> BufferPtr {
-                        if constexpr (std::is_same_v<T, int64_t>) {
-                            auto size = typedSpan.size();
-                            BufferPtr bufferPtr = AlignedBuffer::allocate<vector_size_t>(size, pool);
-                            vector_size_t *arr = bufferPtr->asMutable<vector_size_t>();
-                            bufferPtr->setSize(size * 4);
-                            for (int i = 0; i < size; i++) {
-                                arr[i] = typedSpan.at(i);
-                            }
-                            return bufferPtr;
+                        if constexpr (std::is_same_v<T, int32_t>) {
                             BossArray bossIndices(typedSpan.size(), typedSpan.begin(), std::move(typedSpan));
                             return importFromBossAsOwnerBuffer(bossIndices);
                         } else {
@@ -601,7 +602,7 @@ namespace boss::engines::velox {
     void bossExprToVelox(Expression &&expression, QueryBuilder &queryBuilder) {
         std::visit(
                 boss::utilities::overload(
-                        [&](std::int64_t a) {
+                        [&](std::int32_t a) {
                             queryBuilder.curVeloxExpr.limit = a;
                         },
                         [&](ComplexExpression &&expression) {
@@ -722,6 +723,13 @@ namespace boss::engines::velox {
     }
 
     boss::Expression Engine::evaluate(boss::Expression &&e) {
+        if (std::holds_alternative<ComplexExpression>(e)) {
+            return evaluate(std::get<ComplexExpression>(std::move(e)));
+        }
+        return std::move(e);
+    }
+
+    boss::Expression Engine::evaluate(boss::ComplexExpression &&e) {
         QueryBuilder queryBuilder;
         bossExprToVelox(std::move(e), queryBuilder);
         if (queryBuilder.tableCnt) {

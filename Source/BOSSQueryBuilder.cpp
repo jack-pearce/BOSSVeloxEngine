@@ -81,6 +81,8 @@ namespace boss::engines::velox {
                 return DOUBLE();
             case 3:
                 return VARCHAR();
+            case 4:
+                return INTEGER();
             default:
                 break;
         }

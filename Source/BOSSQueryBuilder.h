@@ -16,13 +16,14 @@ namespace boss::engines::velox {
     using VeloxExpressionSystem = ExtensibleExpressionSystem<>;
     using ExpressionSpanArgument = VeloxExpressionSystem::ExpressionSpanArgument;
     /**
- *     bool = 0, long = 1, double = 2 , ::std::string = 3, Symbol = 4
+ *     bool = 0, long = 1, double = 2 , ::std::string = 3, int = 4
  */
     enum BossType {
         bBOOL = 0,
         bBIGINT,
         bDOUBLE,
-        bSTRING
+        bSTRING,
+        bINTEGER
     };
 
     struct BossArray;

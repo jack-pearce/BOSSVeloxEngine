@@ -30,6 +30,8 @@ namespace boss::engines::velox {
 
         boss::Expression evaluate(boss::Expression &&e);
 
+        boss::Expression evaluate(boss::ComplexExpression &&e);
+
         std::shared_ptr<folly::Executor> executor_;
         CursorParameters params;
         std::unique_ptr<TaskCursor> cursor;
