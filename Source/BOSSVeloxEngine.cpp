@@ -566,9 +566,7 @@ namespace boss::engines::velox {
         return fileColumnNamesMap;
     }
 
-    std::vector<BufferPtr> getIndices(ComplexExpression &&dynamic, memory::MemoryPool *pool) {
-        auto list = transformDynamicsToSpans(std::move(dynamic));
-        auto [listHead, listUnused_, listDynamics, listSpans] = std::move(list).decompose();
+    std::vector<BufferPtr> getIndices(ExpressionSpanArguments &&listSpans, memory::MemoryPool *pool) {
         if (listSpans.empty()) {
             throw std::runtime_error("get index error");
         }
@@ -638,8 +636,7 @@ namespace boss::engines::velox {
                             auto it = std::move_iterator(dynamics.begin());
 
                             if (headName == "Gather") {
-                                auto dynamic = get < ComplexExpression > (std::move(dynamics.at(1)));
-                                queryBuilder.curVeloxExpr.indicesVec = getIndices(std::move(dynamic),
+                                queryBuilder.curVeloxExpr.indicesVec = getIndices(std::move(oldSpans),
                                                                                   queryBuilder.pool_.get());
                                 bossExprToVelox(std::move(*it_start), queryBuilder);
                                 return;
