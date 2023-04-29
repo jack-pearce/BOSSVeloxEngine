@@ -429,245 +429,486 @@ namespace boss::engines::velox {
                     plan.filter(veloxExpr.fieldFiltersVec[filtersCnt++]);
                 }
             }
+
             // list join first
-            if (!veloxExpr.hashJoinListVec.empty()) {
-                for (auto itJoin = veloxExpr.hashJoinListVec.begin();
-                     itJoin != veloxExpr.hashJoinListVec.end(); ++itJoin) {
-                    auto const &hashJoinPair = *itJoin;
-                    auto leftKey = hashJoinPair.leftKeys[0];
-                    auto rightKey = hashJoinPair.rightKeys[0];
-                    auto idxLeft = fileColumnNames.find(leftKey);
-                    auto idxRight = fileColumnNames.find(rightKey);
-                    if (idxLeft != fileColumnNames.end() && idxRight == fileColumnNames.end()) {
-                        int tableIdx; // find right key table
-                        for (int j = 0; j < columnAliaseList.size(); j++) {
-                            if (columnAliaseList[j].find(rightKey) != columnAliaseList[j].end()) {
-                                tableIdx = j;
-                                break;
+            if (!veloxExpr.delayJoinList) {
+                if (!veloxExpr.hashJoinListVec.empty()) {
+                    for (auto itJoin = veloxExpr.hashJoinListVec.begin();
+                         itJoin != veloxExpr.hashJoinListVec.end(); ++itJoin) {
+                        auto const &hashJoinPair = *itJoin;
+                        auto leftKey = hashJoinPair.leftKeys[0];
+                        auto rightKey = hashJoinPair.rightKeys[0];
+                        auto idxLeft = fileColumnNames.find(leftKey);
+                        auto idxRight = fileColumnNames.find(rightKey);
+                        if (idxLeft != fileColumnNames.end() && idxRight == fileColumnNames.end()) {
+                            int tableIdx; // find right key table
+                            for (int j = 0; j < columnAliaseList.size(); j++) {
+                                if (columnAliaseList[j].find(rightKey) != columnAliaseList[j].end()) {
+                                    tableIdx = j;
+                                    break;
+                                }
                             }
-                        }
-                        auto tableName = veloxExpr.tableName;
-                        auto it = joinMapPlan.find(tableName);
-                        if (it == joinMapPlan.end()) {
-                            joinMapPlan.emplace(tableName, 0xff);
-                            outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
-                        }
-                        tableName = veloxExprList[tableIdx].tableName;
-                        it = joinMapPlan.find(tableName);
-                        core::PlanNodePtr build;
-                        if (it == joinMapPlan.end()) {  // first time
-                            joinMapPlan.emplace(tableName, 0xff);
-                            build = tableMapPlan[tableIdx];
-                            outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
-                        } else {
-                            if (it->second == 0xff)
+                            auto tableName = veloxExpr.tableName;
+                            auto it = joinMapPlan.find(tableName);
+                            if (it == joinMapPlan.end()) {
+                                joinMapPlan.emplace(tableName, 0xff);
+                                outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
+                            }
+                            tableName = veloxExprList[tableIdx].tableName;
+                            it = joinMapPlan.find(tableName);
+                            core::PlanNodePtr build;
+                            if (it == joinMapPlan.end()) {  // first time
+                                joinMapPlan.emplace(tableName, 0xff);
                                 build = tableMapPlan[tableIdx];
-                            else
-                                build = tableMapPlan[it->second];
-                            joinMapPlan[tableName] = itExpr - veloxExprList.begin();
-                        }
-                        plan.hashJoin(
-                                {hashJoinPair.leftKeys},
-                                {hashJoinPair.rightKeys},
-                                build,
-                                "",
-                                outputLayout);
-                    } else if (idxLeft == fileColumnNames.end() && idxRight != fileColumnNames.end()) {
-                        int tableIdx; // find left key table
-                        for (int j = 0; j < columnAliaseList.size(); j++) {
-                            if (columnAliaseList[j].find(leftKey) != columnAliaseList[j].end()) {
-                                tableIdx = j;
-                                break;
+                                outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
+                            } else {
+                                if (it->second == 0xff)
+                                    build = tableMapPlan[tableIdx];
+                                else
+                                    build = tableMapPlan[it->second];
+                                joinMapPlan[tableName] = itExpr - veloxExprList.begin();
                             }
-                        }
-                        auto tableName = veloxExpr.tableName;
-                        auto it = joinMapPlan.find(tableName);
-                        if (it == joinMapPlan.end()) {
-                            joinMapPlan.emplace(tableName, 0xff);
-                            outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
-                        }
-                        tableName = veloxExprList[tableIdx].tableName;
-                        it = joinMapPlan.find(tableName);
-                        core::PlanNodePtr build;
-                        if (it == joinMapPlan.end()) {  // first time
-                            joinMapPlan.emplace(tableName, 0xff);
-                            build = tableMapPlan[tableIdx];
-                            outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
-                        } else {
-                            if (it->second == 0xff)
+                            plan.hashJoin(
+                                    {hashJoinPair.leftKeys},
+                                    {hashJoinPair.rightKeys},
+                                    build,
+                                    "",
+                                    outputLayout);
+                        } else if (idxLeft == fileColumnNames.end() && idxRight != fileColumnNames.end()) {
+                            int tableIdx; // find left key table
+                            for (int j = 0; j < columnAliaseList.size(); j++) {
+                                if (columnAliaseList[j].find(leftKey) != columnAliaseList[j].end()) {
+                                    tableIdx = j;
+                                    break;
+                                }
+                            }
+                            auto tableName = veloxExpr.tableName;
+                            auto it = joinMapPlan.find(tableName);
+                            if (it == joinMapPlan.end()) {
+                                joinMapPlan.emplace(tableName, 0xff);
+                                outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
+                            }
+                            tableName = veloxExprList[tableIdx].tableName;
+                            it = joinMapPlan.find(tableName);
+                            core::PlanNodePtr build;
+                            if (it == joinMapPlan.end()) {  // first time
+                                joinMapPlan.emplace(tableName, 0xff);
                                 build = tableMapPlan[tableIdx];
-                            else
-                                build = tableMapPlan[it->second];
-                            joinMapPlan[tableName] = itExpr - veloxExprList.begin();
-                        }
-                        plan.hashJoin(
-                                {hashJoinPair.rightKeys},
-                                {hashJoinPair.leftKeys},
-                                build,
-                                "",
-                                outputLayout);
-                    } else {  // both left and right key are not in the current table
-                        int tableLeft; // find left key table
-                        for (int j = 0; j < columnAliaseList.size(); j++) {
-                            if (columnAliaseList[j].find(leftKey) != columnAliaseList[j].end()) {
-                                tableLeft = j;
-                                break;
+                                outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
+                            } else {
+                                if (it->second == 0xff)
+                                    build = tableMapPlan[tableIdx];
+                                else
+                                    build = tableMapPlan[it->second];
+                                joinMapPlan[tableName] = itExpr - veloxExprList.begin();
                             }
-                        }
-                        int tableRight; // find right key table
-                        for (int j = 0; j < columnAliaseList.size(); j++) {
-                            if (columnAliaseList[j].find(rightKey) != columnAliaseList[j].end()) {
-                                tableRight = j;
-                                break;
+                            plan.hashJoin(
+                                    {hashJoinPair.rightKeys},
+                                    {hashJoinPair.leftKeys},
+                                    build,
+                                    "",
+                                    outputLayout);
+                        } else {  // both left and right key are not in the current table
+                            int tableLeft; // find left key table
+                            for (int j = 0; j < columnAliaseList.size(); j++) {
+                                if (columnAliaseList[j].find(leftKey) != columnAliaseList[j].end()) {
+                                    tableLeft = j;
+                                    break;
+                                }
                             }
-                        }
-                        auto tableName = veloxExprList[tableRight].tableName;
-                        auto it = joinMapPlan.find(tableName);
-                        if (it == joinMapPlan.end()) {
-                            joinMapPlan.emplace(tableName, 0xff);
-                            outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
-                        }
-                        tableName = veloxExprList[tableLeft].tableName;
-                        it = joinMapPlan.find(tableName);
-                        core::PlanNodePtr build;
-                        if (it == joinMapPlan.end()) {  // first time
-                            joinMapPlan.emplace(tableName, 0xff);
-                            build = tableMapPlan[tableLeft];
-                            outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableLeft].selectedColumns);
-                        } else {
-                            if (it->second == 0xff)
+                            int tableRight; // find right key table
+                            for (int j = 0; j < columnAliaseList.size(); j++) {
+                                if (columnAliaseList[j].find(rightKey) != columnAliaseList[j].end()) {
+                                    tableRight = j;
+                                    break;
+                                }
+                            }
+                            auto tableName = veloxExprList[tableRight].tableName;
+                            auto it = joinMapPlan.find(tableName);
+                            if (it == joinMapPlan.end()) {
+                                joinMapPlan.emplace(tableName, 0xff);
+                                outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
+                            }
+                            tableName = veloxExprList[tableLeft].tableName;
+                            it = joinMapPlan.find(tableName);
+                            core::PlanNodePtr build;
+                            if (it == joinMapPlan.end()) {  // first time
+                                joinMapPlan.emplace(tableName, 0xff);
                                 build = tableMapPlan[tableLeft];
-                            else
-                                build = tableMapPlan[it->second];
-                            joinMapPlan[tableName] = itExpr - veloxExprList.begin();
+                                outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableLeft].selectedColumns);
+                            } else {
+                                if (it->second == 0xff)
+                                    build = tableMapPlan[tableLeft];
+                                else
+                                    build = tableMapPlan[it->second];
+                                joinMapPlan[tableName] = itExpr - veloxExprList.begin();
+                            }
+                            plan.hashJoin(
+                                    {hashJoinPair.rightKeys},
+                                    {hashJoinPair.leftKeys},
+                                    build,
+                                    "",
+                                    outputLayout);
                         }
-                        plan.hashJoin(
-                                {hashJoinPair.rightKeys},
-                                {hashJoinPair.leftKeys},
-                                build,
-                                "",
-                                outputLayout);
+                    }
+                }
+                if (!veloxExpr.hashJoinVec.empty()) {
+                    for (auto itJoin = veloxExpr.hashJoinVec.begin(); itJoin != veloxExpr.hashJoinVec.end(); ++itJoin) {
+                        auto const &hashJoinPair = *itJoin;
+                        auto idxLeft = fileColumnNames.find(hashJoinPair.leftKey);
+                        auto idxRight = fileColumnNames.find(hashJoinPair.rightKey);
+                        if (idxLeft != fileColumnNames.end() && idxRight == fileColumnNames.end()) {
+                            int tableIdx; // find right key table
+                            for (int j = 0; j < columnAliaseList.size(); j++) {
+                                if (columnAliaseList[j].find(hashJoinPair.rightKey) != columnAliaseList[j].end()) {
+                                    tableIdx = j;
+                                    break;
+                                }
+                            }
+                            auto tableName = veloxExpr.tableName;
+                            auto it = joinMapPlan.find(tableName);
+                            if (it == joinMapPlan.end()) {
+                                joinMapPlan.emplace(tableName, 0xff);
+                                outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
+                            }
+                            tableName = veloxExprList[tableIdx].tableName;
+                            it = joinMapPlan.find(tableName);
+                            core::PlanNodePtr build;
+                            if (it == joinMapPlan.end()) {  // first time
+                                joinMapPlan.emplace(tableName, 0xff);
+                                build = tableMapPlan[tableIdx];
+                                outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
+                            } else {
+                                if (it->second == 0xff)
+                                    build = tableMapPlan[tableIdx];
+                                else
+                                    build = tableMapPlan[it->second];
+                                joinMapPlan[tableName] = itExpr - veloxExprList.begin();
+                            }
+                            plan.hashJoin(
+                                    {hashJoinPair.leftKey},
+                                    {hashJoinPair.rightKey},
+                                    build,
+                                    "",
+                                    outputLayout);
+                        } else if (idxLeft == fileColumnNames.end() && idxRight != fileColumnNames.end()) {
+                            int tableIdx; // find left key table
+                            for (int j = 0; j < columnAliaseList.size(); j++) {
+                                if (columnAliaseList[j].find(hashJoinPair.leftKey) != columnAliaseList[j].end()) {
+                                    tableIdx = j;
+                                    break;
+                                }
+                            }
+                            auto tableName = veloxExpr.tableName;
+                            auto it = joinMapPlan.find(tableName);
+                            if (it == joinMapPlan.end()) {
+                                joinMapPlan.emplace(tableName, 0xff);
+                                outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
+                            }
+                            tableName = veloxExprList[tableIdx].tableName;
+                            it = joinMapPlan.find(tableName);
+                            core::PlanNodePtr build;
+                            if (it == joinMapPlan.end()) {  // first time
+                                joinMapPlan.emplace(tableName, 0xff);
+                                build = tableMapPlan[tableIdx];
+                                outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
+                            } else {
+                                if (it->second == 0xff)
+                                    build = tableMapPlan[tableIdx];
+                                else
+                                    build = tableMapPlan[it->second];
+                                joinMapPlan[tableName] = itExpr - veloxExprList.begin();
+                            }
+                            plan.hashJoin(
+                                    {hashJoinPair.rightKey},
+                                    {hashJoinPair.leftKey},
+                                    build,
+                                    "",
+                                    outputLayout);
+                        } else {  // both left and right key are not in the current table
+                            int tableLeft; // find left key table
+                            for (int j = 0; j < columnAliaseList.size(); j++) {
+                                if (columnAliaseList[j].find(hashJoinPair.leftKey) != columnAliaseList[j].end()) {
+                                    tableLeft = j;
+                                    break;
+                                }
+                            }
+                            int tableRight; // find right key table
+                            for (int j = 0; j < columnAliaseList.size(); j++) {
+                                if (columnAliaseList[j].find(hashJoinPair.rightKey) != columnAliaseList[j].end()) {
+                                    tableRight = j;
+                                    break;
+                                }
+                            }
+                            auto tableName = veloxExprList[tableRight].tableName;
+                            auto it = joinMapPlan.find(tableName);
+                            if (it == joinMapPlan.end()) {
+                                joinMapPlan.emplace(tableName, 0xff);
+                                outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
+                            }
+                            tableName = veloxExprList[tableLeft].tableName;
+                            it = joinMapPlan.find(tableName);
+                            core::PlanNodePtr build;
+                            if (it == joinMapPlan.end()) {  // first time
+                                joinMapPlan.emplace(tableName, 0xff);
+                                build = tableMapPlan[tableLeft];
+                                outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableLeft].selectedColumns);
+                            } else {
+                                if (it->second == 0xff)
+                                    build = tableMapPlan[tableLeft];
+                                else
+                                    build = tableMapPlan[it->second];
+                                joinMapPlan[tableName] = itExpr - veloxExprList.begin();
+                            }
+                            plan.hashJoin(
+                                    {hashJoinPair.rightKey},
+                                    {hashJoinPair.leftKey},
+                                    build,
+                                    "",
+                                    outputLayout);
+                        }
+                    }
+                }
+            } else {
+                if (!veloxExpr.hashJoinVec.empty()) {
+                    for (auto itJoin = veloxExpr.hashJoinVec.begin(); itJoin != veloxExpr.hashJoinVec.end(); ++itJoin) {
+                        auto const &hashJoinPair = *itJoin;
+                        auto idxLeft = fileColumnNames.find(hashJoinPair.leftKey);
+                        auto idxRight = fileColumnNames.find(hashJoinPair.rightKey);
+                        if (idxLeft != fileColumnNames.end() && idxRight == fileColumnNames.end()) {
+                            int tableIdx; // find right key table
+                            for (int j = 0; j < columnAliaseList.size(); j++) {
+                                if (columnAliaseList[j].find(hashJoinPair.rightKey) != columnAliaseList[j].end()) {
+                                    tableIdx = j;
+                                    break;
+                                }
+                            }
+                            auto tableName = veloxExpr.tableName;
+                            auto it = joinMapPlan.find(tableName);
+                            if (it == joinMapPlan.end()) {
+                                joinMapPlan.emplace(tableName, 0xff);
+                                outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
+                            }
+                            tableName = veloxExprList[tableIdx].tableName;
+                            it = joinMapPlan.find(tableName);
+                            core::PlanNodePtr build;
+                            if (it == joinMapPlan.end()) {  // first time
+                                joinMapPlan.emplace(tableName, 0xff);
+                                build = tableMapPlan[tableIdx];
+                                outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
+                            } else {
+                                if (it->second == 0xff)
+                                    build = tableMapPlan[tableIdx];
+                                else
+                                    build = tableMapPlan[it->second];
+                                joinMapPlan[tableName] = itExpr - veloxExprList.begin();
+                            }
+                            plan.hashJoin(
+                                    {hashJoinPair.leftKey},
+                                    {hashJoinPair.rightKey},
+                                    build,
+                                    "",
+                                    outputLayout);
+                        } else if (idxLeft == fileColumnNames.end() && idxRight != fileColumnNames.end()) {
+                            int tableIdx; // find left key table
+                            for (int j = 0; j < columnAliaseList.size(); j++) {
+                                if (columnAliaseList[j].find(hashJoinPair.leftKey) != columnAliaseList[j].end()) {
+                                    tableIdx = j;
+                                    break;
+                                }
+                            }
+                            auto tableName = veloxExpr.tableName;
+                            auto it = joinMapPlan.find(tableName);
+                            if (it == joinMapPlan.end()) {
+                                joinMapPlan.emplace(tableName, 0xff);
+                                outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
+                            }
+                            tableName = veloxExprList[tableIdx].tableName;
+                            it = joinMapPlan.find(tableName);
+                            core::PlanNodePtr build;
+                            if (it == joinMapPlan.end()) {  // first time
+                                joinMapPlan.emplace(tableName, 0xff);
+                                build = tableMapPlan[tableIdx];
+                                outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
+                            } else {
+                                if (it->second == 0xff)
+                                    build = tableMapPlan[tableIdx];
+                                else
+                                    build = tableMapPlan[it->second];
+                                joinMapPlan[tableName] = itExpr - veloxExprList.begin();
+                            }
+                            plan.hashJoin(
+                                    {hashJoinPair.rightKey},
+                                    {hashJoinPair.leftKey},
+                                    build,
+                                    "",
+                                    outputLayout);
+                        } else {  // both left and right key are not in the current table
+                            int tableLeft; // find left key table
+                            for (int j = 0; j < columnAliaseList.size(); j++) {
+                                if (columnAliaseList[j].find(hashJoinPair.leftKey) != columnAliaseList[j].end()) {
+                                    tableLeft = j;
+                                    break;
+                                }
+                            }
+                            int tableRight; // find right key table
+                            for (int j = 0; j < columnAliaseList.size(); j++) {
+                                if (columnAliaseList[j].find(hashJoinPair.rightKey) != columnAliaseList[j].end()) {
+                                    tableRight = j;
+                                    break;
+                                }
+                            }
+                            auto tableName = veloxExprList[tableRight].tableName;
+                            auto it = joinMapPlan.find(tableName);
+                            if (it == joinMapPlan.end()) {
+                                joinMapPlan.emplace(tableName, 0xff);
+                                outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
+                            }
+                            tableName = veloxExprList[tableLeft].tableName;
+                            it = joinMapPlan.find(tableName);
+                            core::PlanNodePtr build;
+                            if (it == joinMapPlan.end()) {  // first time
+                                joinMapPlan.emplace(tableName, 0xff);
+                                build = tableMapPlan[tableLeft];
+                                outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableLeft].selectedColumns);
+                            } else {
+                                if (it->second == 0xff)
+                                    build = tableMapPlan[tableLeft];
+                                else
+                                    build = tableMapPlan[it->second];
+                                joinMapPlan[tableName] = itExpr - veloxExprList.begin();
+                            }
+                            plan.hashJoin(
+                                    {hashJoinPair.rightKey},
+                                    {hashJoinPair.leftKey},
+                                    build,
+                                    "",
+                                    outputLayout);
+                        }
+                    }
+                }
+                if (!veloxExpr.hashJoinListVec.empty()) {
+                    for (auto itJoin = veloxExpr.hashJoinListVec.begin();
+                         itJoin != veloxExpr.hashJoinListVec.end(); ++itJoin) {
+                        auto const &hashJoinPair = *itJoin;
+                        auto leftKey = hashJoinPair.leftKeys[0];
+                        auto rightKey = hashJoinPair.rightKeys[0];
+                        auto idxLeft = fileColumnNames.find(leftKey);
+                        auto idxRight = fileColumnNames.find(rightKey);
+                        if (idxLeft != fileColumnNames.end() && idxRight == fileColumnNames.end()) {
+                            int tableIdx; // find right key table
+                            for (int j = 0; j < columnAliaseList.size(); j++) {
+                                if (columnAliaseList[j].find(rightKey) != columnAliaseList[j].end()) {
+                                    tableIdx = j;
+                                    break;
+                                }
+                            }
+                            auto tableName = veloxExpr.tableName;
+                            auto it = joinMapPlan.find(tableName);
+                            if (it == joinMapPlan.end()) {
+                                joinMapPlan.emplace(tableName, 0xff);
+                                outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
+                            }
+                            tableName = veloxExprList[tableIdx].tableName;
+                            it = joinMapPlan.find(tableName);
+                            core::PlanNodePtr build;
+                            if (it == joinMapPlan.end()) {  // first time
+                                joinMapPlan.emplace(tableName, 0xff);
+                                build = tableMapPlan[tableIdx];
+                                outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
+                            } else {
+                                if (it->second == 0xff)
+                                    build = tableMapPlan[tableIdx];
+                                else
+                                    build = tableMapPlan[it->second];
+                                joinMapPlan[tableName] = itExpr - veloxExprList.begin();
+                            }
+                            plan.hashJoin(
+                                    {hashJoinPair.leftKeys},
+                                    {hashJoinPair.rightKeys},
+                                    build,
+                                    "",
+                                    outputLayout);
+                        } else if (idxLeft == fileColumnNames.end() && idxRight != fileColumnNames.end()) {
+                            int tableIdx; // find left key table
+                            for (int j = 0; j < columnAliaseList.size(); j++) {
+                                if (columnAliaseList[j].find(leftKey) != columnAliaseList[j].end()) {
+                                    tableIdx = j;
+                                    break;
+                                }
+                            }
+                            auto tableName = veloxExpr.tableName;
+                            auto it = joinMapPlan.find(tableName);
+                            if (it == joinMapPlan.end()) {
+                                joinMapPlan.emplace(tableName, 0xff);
+                                outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
+                            }
+                            tableName = veloxExprList[tableIdx].tableName;
+                            it = joinMapPlan.find(tableName);
+                            core::PlanNodePtr build;
+                            if (it == joinMapPlan.end()) {  // first time
+                                joinMapPlan.emplace(tableName, 0xff);
+                                build = tableMapPlan[tableIdx];
+                                outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
+                            } else {
+                                if (it->second == 0xff)
+                                    build = tableMapPlan[tableIdx];
+                                else
+                                    build = tableMapPlan[it->second];
+                                joinMapPlan[tableName] = itExpr - veloxExprList.begin();
+                            }
+                            plan.hashJoin(
+                                    {hashJoinPair.rightKeys},
+                                    {hashJoinPair.leftKeys},
+                                    build,
+                                    "",
+                                    outputLayout);
+                        } else {  // both left and right key are not in the current table
+                            int tableLeft; // find left key table
+                            for (int j = 0; j < columnAliaseList.size(); j++) {
+                                if (columnAliaseList[j].find(leftKey) != columnAliaseList[j].end()) {
+                                    tableLeft = j;
+                                    break;
+                                }
+                            }
+                            int tableRight; // find right key table
+                            for (int j = 0; j < columnAliaseList.size(); j++) {
+                                if (columnAliaseList[j].find(rightKey) != columnAliaseList[j].end()) {
+                                    tableRight = j;
+                                    break;
+                                }
+                            }
+                            auto tableName = veloxExprList[tableRight].tableName;
+                            auto it = joinMapPlan.find(tableName);
+                            if (it == joinMapPlan.end()) {
+                                joinMapPlan.emplace(tableName, 0xff);
+                                outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
+                            }
+                            tableName = veloxExprList[tableLeft].tableName;
+                            it = joinMapPlan.find(tableName);
+                            core::PlanNodePtr build;
+                            if (it == joinMapPlan.end()) {  // first time
+                                joinMapPlan.emplace(tableName, 0xff);
+                                build = tableMapPlan[tableLeft];
+                                outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableLeft].selectedColumns);
+                            } else {
+                                if (it->second == 0xff)
+                                    build = tableMapPlan[tableLeft];
+                                else
+                                    build = tableMapPlan[it->second];
+                                joinMapPlan[tableName] = itExpr - veloxExprList.begin();
+                            }
+                            plan.hashJoin(
+                                    {hashJoinPair.rightKeys},
+                                    {hashJoinPair.leftKeys},
+                                    build,
+                                    "",
+                                    outputLayout);
+                        }
                     }
                 }
             }
 
-            if (!veloxExpr.hashJoinVec.empty()) {
-                for (auto itJoin = veloxExpr.hashJoinVec.begin(); itJoin != veloxExpr.hashJoinVec.end(); ++itJoin) {
-                    auto const &hashJoinPair = *itJoin;
-                    auto idxLeft = fileColumnNames.find(hashJoinPair.leftKey);
-                    auto idxRight = fileColumnNames.find(hashJoinPair.rightKey);
-                    if (idxLeft != fileColumnNames.end() && idxRight == fileColumnNames.end()) {
-                        int tableIdx; // find right key table
-                        for (int j = 0; j < columnAliaseList.size(); j++) {
-                            if (columnAliaseList[j].find(hashJoinPair.rightKey) != columnAliaseList[j].end()) {
-                                tableIdx = j;
-                                break;
-                            }
-                        }
-                        auto tableName = veloxExpr.tableName;
-                        auto it = joinMapPlan.find(tableName);
-                        if (it == joinMapPlan.end()) {
-                            joinMapPlan.emplace(tableName, 0xff);
-                            outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
-                        }
-                        tableName = veloxExprList[tableIdx].tableName;
-                        it = joinMapPlan.find(tableName);
-                        core::PlanNodePtr build;
-                        if (it == joinMapPlan.end()) {  // first time
-                            joinMapPlan.emplace(tableName, 0xff);
-                            build = tableMapPlan[tableIdx];
-                            outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
-                        } else {
-                            if (it->second == 0xff)
-                                build = tableMapPlan[tableIdx];
-                            else
-                                build = tableMapPlan[it->second];
-                            joinMapPlan[tableName] = itExpr - veloxExprList.begin();
-                        }
-                        plan.hashJoin(
-                                {hashJoinPair.leftKey},
-                                {hashJoinPair.rightKey},
-                                build,
-                                "",
-                                outputLayout);
-                    } else if (idxLeft == fileColumnNames.end() && idxRight != fileColumnNames.end()) {
-                        int tableIdx; // find left key table
-                        for (int j = 0; j < columnAliaseList.size(); j++) {
-                            if (columnAliaseList[j].find(hashJoinPair.leftKey) != columnAliaseList[j].end()) {
-                                tableIdx = j;
-                                break;
-                            }
-                        }
-                        auto tableName = veloxExpr.tableName;
-                        auto it = joinMapPlan.find(tableName);
-                        if (it == joinMapPlan.end()) {
-                            joinMapPlan.emplace(tableName, 0xff);
-                            outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
-                        }
-                        tableName = veloxExprList[tableIdx].tableName;
-                        it = joinMapPlan.find(tableName);
-                        core::PlanNodePtr build;
-                        if (it == joinMapPlan.end()) {  // first time
-                            joinMapPlan.emplace(tableName, 0xff);
-                            build = tableMapPlan[tableIdx];
-                            outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
-                        } else {
-                            if (it->second == 0xff)
-                                build = tableMapPlan[tableIdx];
-                            else
-                                build = tableMapPlan[it->second];
-                            joinMapPlan[tableName] = itExpr - veloxExprList.begin();
-                        }
-                        plan.hashJoin(
-                                {hashJoinPair.rightKey},
-                                {hashJoinPair.leftKey},
-                                build,
-                                "",
-                                outputLayout);
-                    } else {  // both left and right key are not in the current table
-                        int tableLeft; // find left key table
-                        for (int j = 0; j < columnAliaseList.size(); j++) {
-                            if (columnAliaseList[j].find(hashJoinPair.leftKey) != columnAliaseList[j].end()) {
-                                tableLeft = j;
-                                break;
-                            }
-                        }
-                        int tableRight; // find right key table
-                        for (int j = 0; j < columnAliaseList.size(); j++) {
-                            if (columnAliaseList[j].find(hashJoinPair.rightKey) != columnAliaseList[j].end()) {
-                                tableRight = j;
-                                break;
-                            }
-                        }
-                        auto tableName = veloxExprList[tableRight].tableName;
-                        auto it = joinMapPlan.find(tableName);
-                        if (it == joinMapPlan.end()) {
-                            joinMapPlan.emplace(tableName, 0xff);
-                            outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
-                        }
-                        tableName = veloxExprList[tableLeft].tableName;
-                        it = joinMapPlan.find(tableName);
-                        core::PlanNodePtr build;
-                        if (it == joinMapPlan.end()) {  // first time
-                            joinMapPlan.emplace(tableName, 0xff);
-                            build = tableMapPlan[tableLeft];
-                            outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableLeft].selectedColumns);
-                        } else {
-                            if (it->second == 0xff)
-                                build = tableMapPlan[tableLeft];
-                            else
-                                build = tableMapPlan[it->second];
-                            joinMapPlan[tableName] = itExpr - veloxExprList.begin();
-                        }
-                        plan.hashJoin(
-                                {hashJoinPair.rightKey},
-                                {hashJoinPair.leftKey},
-                                build,
-                                "",
-                                outputLayout);
-                    }
-                }
-            }
             if (!veloxExpr.projectionsVec.empty()) {
                 plan.project(veloxExpr.projectionsVec);
             }

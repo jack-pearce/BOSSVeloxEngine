@@ -387,6 +387,8 @@ namespace boss::engines::velox {
                                     queryBuilder.tmpJoinPairList.leftFlag = true;
                                 else {
                                     queryBuilder.curVeloxExpr.hashJoinListVec.push_back(queryBuilder.tmpJoinPairList);
+                                    if (!queryBuilder.curVeloxExpr.hashJoinVec.empty())
+                                        queryBuilder.curVeloxExpr.delayJoinList = true;
                                     queryBuilder.tmpJoinPairList.clear();
                                 }
                             }

@@ -98,6 +98,7 @@ namespace boss::engines::velox {
     struct FormExpr {
         int32_t limit = 0;
         bool orderBy = false;
+        bool delayJoinList = false;
         std::string tableName;
         std::vector<std::string> selectedColumns;
         std::vector<std::string> outColumns;
@@ -118,6 +119,7 @@ namespace boss::engines::velox {
         void clear() {
             limit = 0;
             orderBy = false;
+            delayJoinList = false;
             tableName.clear();
             selectedColumns.clear();
             outColumns.clear();
