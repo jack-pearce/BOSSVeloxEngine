@@ -108,13 +108,13 @@ namespace boss::engines::velox {
 
     static SpanReferenceCounter spanReferenceCounter;
 
-    int64_t dateToInt64(std::string str) {
+    int32_t dateToInt32(std::string str) {
         std::istringstream iss;
         iss.str(str);
         struct std::tm tm = {};
         iss >> std::get_time(&tm, "%Y-%m-%d");
-        int64_t t = std::mktime(&tm);
-        return (int64_t) std::chrono::duration_cast<std::chrono::days>(
+        auto t = std::mktime(&tm);
+        return (int32_t) std::chrono::duration_cast<std::chrono::days>(
                 std::chrono::system_clock::from_time_t(t).time_since_epoch())
                 .count();
     }
@@ -128,7 +128,7 @@ namespace boss::engines::velox {
                                      std::stringstream out;
                                      out << argument;
                                      std::string dateString = out.str().substr(1, 10);
-                                     return dateToInt64(dateString);
+                                     return dateToInt32(dateString);
                                  }
                                  // at least evaluate all the arguments
                                  auto [_, statics, dynamics, spans] = std::move(e).decompose();
@@ -359,20 +359,20 @@ namespace boss::engines::velox {
                                 if (tmpArhStr.substr(0, 10) == "DateObject") {
                                     std::string dateString = tmpArhStr.substr(12, 10);
 
-                                    auto dateInt64 = dateToInt64(dateString);
+                                    auto dateInt32 = dateToInt32(dateString);
 
                                     AtomicExpr element;
-                                    element.data = to_string(dateInt64);
+                                    element.data = to_string(dateInt32);
                                     element.type = cValue;
                                     queryBuilder.tmpFieldFilter.element.emplace_back(element);
                                     continue;
                                 }
                                 if (tmpArhStr.substr(0, 4) == "Date") {
                                     std::string dateString = tmpArhStr.substr(6, 10);
-                                    auto dateInt64 = dateToInt64(dateString);
+                                    auto dateInt32 = dateToInt32(dateString);
 
                                     AtomicExpr element;
-                                    element.data = to_string(dateInt64);
+                                    element.data = to_string(dateInt32);
                                     element.type = cValue;
                                     queryBuilder.tmpFieldFilter.element.emplace_back(element);
                                     continue;
