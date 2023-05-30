@@ -459,7 +459,7 @@ namespace boss::engines::velox {
 //                              auto out = fmt::format("year({})", projectionList.back());
                                     // Date type has already been treated as int64
                                     auto out = fmt::format(
-                                            "cast(((cast({} AS DOUBLE) + 719563.285) / 365.265) AS BIGINT)",
+                                            "cast(((cast({} AS DOUBLE) + 719563.285) / 365.265) AS INTEGER)",
                                             projectionList.back());
                                     projectionList.pop_back();
                                     projectionList.pop_back();

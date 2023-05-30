@@ -930,13 +930,16 @@ namespace boss::engines::velox {
                 plan.localPartition({});
                 plan.finalAggregation();
             }
-            if (!veloxExpr.orderByVec.empty()) {
-                plan.orderBy(veloxExpr.orderByVec, false);
-            }
             if (!veloxExpr.filter.empty()) {
                 plan.filter(veloxExpr.filter);
             }
-            if (veloxExpr.limit > 0) {
+            if (!veloxExpr.orderByVec.empty()) {
+                if (veloxExpr.limit > 0) {
+                    plan.topN(veloxExpr.orderByVec, veloxExpr.limit, false);
+                } else {
+                    plan.orderBy(veloxExpr.orderByVec, false);
+                }
+            } else if (veloxExpr.limit > 0) {
                 plan.limit(0, veloxExpr.limit, false);
             }
             auto planPtr = plan.planNode();
