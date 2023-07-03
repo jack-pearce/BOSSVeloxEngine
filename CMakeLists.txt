@@ -105,21 +105,17 @@ target_include_directories(BOSSVeloxEngine PUBLIC
         ${VELOX_DIRS}/velox/external/xxhash/
         ${VELOX_DIRS}/third_party/
         ${VELOX_DIRS}/third_party/xsimd/
-        ${VELOX_DIRS}/third_party/xsimd/include/
-        ${BOSSVeloxEngine_BINARY_DIR}/_deps/protobuf-src/src/)
+        ${VELOX_DIRS}/third_party/xsimd/include/)
 
-set(DVELOX_BUILD_TESTING ON)
+set(VELOX_BUILD_TESTING OFF)
 set(VELOX_CODEGEN_SUPPORT OFF)
-set(VELOX_ENABLE_HIVE_CONNECTOR ON)
+set(VELOX_ENABLE_HIVE_CONNECTOR OFF)
 set(VELOX_ENABLE_TPCH_CONNECTOR OFF)
 set(VELOX_ENABLE_SPARK_FUNCTIONS OFF)
 
 add_subdirectory(${VELOX_DIRS} velox)
 target_link_libraries(
         BOSSVeloxEngine
-        velox_tpch_connector
-        velox_hive_connector
-        velox_dwio_dwrf_proto
         velox_aggregates
         velox_functions_prestosql
         velox_parse_parser
