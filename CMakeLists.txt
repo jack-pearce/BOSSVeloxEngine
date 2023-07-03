@@ -105,16 +105,27 @@ target_include_directories(BOSSVeloxEngine PUBLIC
         ${VELOX_DIRS}/velox/external/xxhash/
         ${VELOX_DIRS}/third_party/
         ${VELOX_DIRS}/third_party/xsimd/
-        ${VELOX_DIRS}/third_party/xsimd/include/)
+        ${VELOX_DIRS}/third_party/xsimd/include/
+        ${BOSSVeloxEngine_BINARY_DIR}/_deps/protobuf-src/src/)
+
+set(DVELOX_BUILD_TESTING ON)
+set(VELOX_CODEGEN_SUPPORT OFF)
+set(VELOX_ENABLE_HIVE_CONNECTOR ON)
+set(VELOX_ENABLE_TPCH_CONNECTOR OFF)
+set(VELOX_ENABLE_SPARK_FUNCTIONS OFF)
+
 add_subdirectory(${VELOX_DIRS} velox)
 target_link_libraries(
         BOSSVeloxEngine
+        velox_tpch_connector
+        velox_hive_connector
+        velox_dwio_dwrf_proto
         velox_aggregates
         velox_functions_prestosql
         velox_parse_parser
         atomic
 )
-target_compile_options(BOSSVeloxEngine SYSTEM PUBLIC -DARROW_STATIC -msse4.2)
+target_compile_options(BOSSVeloxEngine PUBLIC -DARROW_STATIC -msse4.2 -DFOLLY_CFG_NO_COROUTINES -DFOLLY_HAS_COROUTINES=0)
 if (UNIX AND NOT APPLE)
     target_link_libraries(BOSSVeloxEngine uuid)
 endif ()
@@ -126,6 +137,8 @@ set_property(TARGET BOSSVeloxEngine PROPERTY CXX_STANDARD 20)
 if (MSVC)
     target_compile_options(BOSSVeloxEngine PUBLIC "/Zc:__cplusplus")
     target_compile_options(BOSSVeloxEngine PUBLIC "/EHsc")
+    # to link against all needed symbols for loading BulKBOSS as a plugin
+    target_link_libraries(${targetName} ${BOSS_BINARY_DIR}/BOSS.lib)
 endif (MSVC)
 target_include_directories(BOSSVeloxEngine SYSTEM PUBLIC ${BOSSVeloxEngine_BINARY_DIR}/deps/include)
 add_dependencies(BOSSVeloxEngine BOSS)
