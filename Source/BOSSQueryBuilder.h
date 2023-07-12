@@ -16,13 +16,12 @@ namespace boss::engines::velox {
     using VeloxExpressionSystem = ExtensibleExpressionSystem<>;
     using ExpressionSpanArgument = VeloxExpressionSystem::ExpressionSpanArgument;
     /**
- *     bool = 0, long = 1, double = 2 , ::std::string = 3, int = 4
+ *     bool = 0, long = 1, double = 2, int = 3
  */
     enum BossType {
         bBOOL = 0,
         bBIGINT,
         bDOUBLE,
-        bSTRING,
         bINTEGER
     };
 
@@ -40,18 +39,18 @@ namespace boss::engines::velox {
 
         BossArray(BossArray const &bossArray) noexcept = delete;
 
-        explicit BossArray(BossArray &&bossArray) noexcept {
+        BossArray(BossArray &&bossArray) noexcept {
             length = bossArray.length;
             buffers = bossArray.buffers;
             holdSpan = std::move(bossArray.holdSpan);
         }
 
-        ExpressionSpanArgument holdSpan;
+        ExpressionSpanArgument holdSpan{};
         int64_t length;
         const void *buffers;
 
         // Release callback
-        void (*release)(struct BossArray *);
+        void (*release)(struct BossArray *){};
     };
 
     enum ColumnType {
@@ -141,9 +140,7 @@ namespace boss::engines::velox {
 
     class QueryBuilder {
     public:
-        QueryBuilder() {
-            tableCnt = 0;
-        }
+        QueryBuilder() : tableCnt(0) {}
 
         int tableCnt;
         FormExpr curVeloxExpr;
@@ -166,17 +163,15 @@ namespace boss::engines::velox {
         core::PlanNodePtr getVeloxPlanBuilder();
     };
 
-    VectorPtr importFromBossAsViewer(BossType bossType, BossArray &bossArray, memory::MemoryPool *pool);
-
     VectorPtr importFromBossAsOwner(BossType bossType, BossArray &bossArray, memory::MemoryPool *pool);
 
     BufferPtr importFromBossAsOwnerBuffer(BossArray &bossArray);
 
-    std::vector<RowVectorPtr> runQuery(const CursorParameters &params, std::unique_ptr<TaskCursor> &cursor);
+    std::vector<RowVectorPtr> veloxRunQuery(const CursorParameters &params, std::unique_ptr<TaskCursor> &cursor);
 
-    void printResults(const std::vector<RowVectorPtr> &results);
+    void veloxPrintResults(const std::vector<RowVectorPtr> &results);
 
-    RowVectorPtr makeRowVector(std::vector<std::string> childNames,
-                               std::vector<VectorPtr> children, memory::MemoryPool *pool);
+    RowVectorPtr makeRowVectorNoCopy(std::vector<std::string> childNames,
+                                     std::vector<VectorPtr> children, memory::MemoryPool *pool);
 
 } // namespace boss::engines::velox

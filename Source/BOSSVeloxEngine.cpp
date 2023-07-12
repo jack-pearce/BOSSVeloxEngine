@@ -26,7 +26,6 @@ using namespace facebook::velox::exec::test;
 #include <regex>
 #include <set>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -63,7 +62,6 @@ namespace boss {
 
 namespace boss::engines::velox {
     using VeloxExpressionSystem = ExtensibleExpressionSystem<>;
-    using AtomicExpression = VeloxExpressionSystem::AtomicExpression;
     using ComplexExpression = VeloxExpressionSystem::ComplexExpression;
     template<typename... T>
     using ComplexExpressionWithStaticArguments =
@@ -108,7 +106,7 @@ namespace boss::engines::velox {
 
     static SpanReferenceCounter spanReferenceCounter;
 
-    int32_t dateToInt32(std::string str) {
+    int32_t dateToInt32(const std::string &str) {
         std::istringstream iss;
         iss.str(str);
         struct std::tm tm = {};
@@ -205,14 +203,6 @@ namespace boss::engines::velox {
                 std::move(input));
     }
 
-    template<typename VisiteeT, typename... VisitorTs>
-    decltype(auto) visitArgument(VisiteeT &&visitee, VisitorTs... visitors) {
-        return std::visit(boss::utilities::overload(
-                                  std::forward<decltype(visitors)>(visitors)...,
-                                  [](auto &&e) -> Expression { return std::forward<decltype(e)>(e); }),
-                          std::forward<decltype(visitee)>(visitee));
-    }
-
     template<typename T>
     VectorPtr spanToVelox(boss::Span<T> &&span, memory::MemoryPool *pool, BufferPtr indices = nullptr) {
         BossArray bossArray(span.size(), span.begin(), std::move(span));
@@ -259,14 +249,14 @@ namespace boss::engines::velox {
         }
     }
 
-    bool cmpFunCheck(std::string input) {
-        static std::vector<std::string> cmpFun{"Greater", "Equal", "StringContainsQ"};
-        for (int i = 0; i < cmpFun.size(); i++) {
-            if (input == cmpFun[i]) {
-                return 1;
+    bool cmpFunCheck(const std::string &input) {
+        static std::vector<std::string> const cmpFun{"Greater", "Equal", "StringContainsQ"};
+        for (const auto &i: cmpFun) {
+            if (input == i) {
+                return true;
             }
         }
-        return 0;
+        return false;
     }
 
     void formatVeloxProjection(std::vector<std::string> &projectionList,
@@ -276,8 +266,9 @@ namespace boss::engines::velox {
         for (int i = 0; i < 3; i++) {
             auto tmp = projectionList.back();
             auto it = projNameMap.find(tmp);
-            if (it != projNameMap.end())
+            if (it != projNameMap.end()) {
                 tmp = it->second;
+            }
             input[2 - i] = tmp;
             projectionList.pop_back();
         }
@@ -288,7 +279,9 @@ namespace boss::engines::velox {
             out = fmt::format("({}) + ({})", input[1], input[2]);
         } else if (input[0] == "Minus" || input[0] == "Subtract") {
             out = fmt::format("({}) - ({})", input[1], input[2]);
-        } else VELOX_FAIL("unexpected Projection type");
+        } else {
+            throw std::runtime_error("unexpected Projection type");
+        }
         projectionList.push_back(out);
     }
 
@@ -526,12 +519,12 @@ namespace boss::engines::velox {
 
         std::for_each(
                 std::make_move_iterator(columns.begin()), std::make_move_iterator(columns.end()),
-                [&colNameVec, &colDataListVec, pool, &fileColumnNamesMap, indicesVec](
+                [&colNameVec, &colDataListVec, pool, &fileColumnNamesMap, &indicesVec](
                         auto &&columnExpr) {
-                    auto column = get < ComplexExpression > (std::forward<decltype(columnExpr)>(columnExpr));
+                    auto column = get<ComplexExpression>(std::forward<decltype(columnExpr)>(columnExpr));
                     auto [head, unused_, dynamics, spans] = std::move(column).decompose();
-                    auto columnName = get < Symbol > (std::move(dynamics.at(0)));
-                    auto dynamic = get < ComplexExpression > (std::move(dynamics.at(1)));
+                    auto columnName = get<Symbol>(std::move(dynamics.at(0)));
+                    auto dynamic = get<ComplexExpression>(std::move(dynamics.at(1)));
                     auto list = transformDynamicsToSpans(std::move(dynamic));
                     auto [listHead, listUnused_, listDynamics, listSpans] = std::move(list).decompose();
                     if (listSpans.empty()) {
@@ -570,14 +563,14 @@ namespace boss::engines::velox {
                 assert(colDataListVec[j].size() == listSize);
                 rowData.push_back(std::move(colDataListVec[j][i]));
             }
-            auto rowVector = makeRowVector(colNameVec, rowData, pool);
+            auto rowVector = makeRowVectorNoCopy(colNameVec, rowData, pool);
             rowDataVec.push_back(std::move(rowVector));
         }
 
         return fileColumnNamesMap;
     }
 
-    std::vector<BufferPtr> getIndices(ExpressionSpanArguments &&listSpans, memory::MemoryPool *pool) {
+    std::vector<BufferPtr> getIndices(ExpressionSpanArguments &&listSpans) {
         if (listSpans.empty()) {
             throw std::runtime_error("get index error");
         }
@@ -585,7 +578,7 @@ namespace boss::engines::velox {
         std::vector<BufferPtr> indicesVec;
         for (auto &subSpan: listSpans) {
             BufferPtr indexData = std::visit(
-                    [pool]<typename T>(boss::Span<T> &&typedSpan) -> BufferPtr {
+                    []<typename T>(boss::Span<T> &&typedSpan) -> BufferPtr {
                         if constexpr (std::is_same_v<T, int32_t>) {
                             BossArray bossIndices(typedSpan.size(), typedSpan.begin(), std::move(typedSpan));
                             return importFromBossAsOwnerBuffer(bossIndices);
@@ -636,17 +629,16 @@ namespace boss::engines::velox {
                             auto [head, statics, dynamics, oldSpans] = std::move(expression).decompose();
 
                             auto it_start = std::move_iterator(dynamics.begin());
-                            auto it = std::move_iterator(dynamics.begin());
+                            auto iter = std::move_iterator(dynamics.begin());
 
                             if (headName == "Gather") {
-                                queryBuilder.curVeloxExpr.indicesVec = getIndices(std::move(oldSpans),
-                                                                                  queryBuilder.pool_.get());
+                                queryBuilder.curVeloxExpr.indicesVec = getIndices(std::move(oldSpans));
                                 bossExprToVelox(std::move(*it_start), queryBuilder);
                                 return;
                             }
 
-                            for (; it != std::move_iterator(dynamics.end()); ++it) {
-                                auto argument = *it;
+                            for (; iter != std::move_iterator(dynamics.end()); ++iter) {
+                                auto argument = *iter;
 #ifdef DebugInfo
                                 std::cout << "argument  " << argument << endl;
 #endif
@@ -661,7 +653,7 @@ namespace boss::engines::velox {
                                     if (!queryBuilder.curVeloxExpr.tmpFieldFiltersVec.empty())
                                         queryBuilder.formatVeloxFilter_Join();
                                 } else if (headName == "As") {
-                                    if ((it - it_start) % 2 == 0) {
+                                    if ((iter - it_start) % 2 == 0) {
                                         projectionName = toString(argument);
                                     } else {
                                         std::vector<std::string> projectionList;
@@ -732,17 +724,17 @@ namespace boss::engines::velox {
     boss::Expression Engine::evaluate(boss::ComplexExpression &&e) {
         QueryBuilder queryBuilder;
         bossExprToVelox(std::move(e), queryBuilder);
-        if (queryBuilder.tableCnt) {
+        if (queryBuilder.tableCnt != 0) {
             queryBuilder.getFileColumnNamesMap();
             queryBuilder.reformVeloxExpr();
             auto planPtr = queryBuilder.getVeloxPlanBuilder();
             params.planNode = planPtr;
-            auto results = runQuery(params, cursor);
+            auto results = veloxRunQuery(params, cursor);
             if (!cursor) {
                 throw std::runtime_error("Query terminated with error");
             }
 #ifdef DebugInfo
-            printResults(results);
+            veloxPrintResults(results);
             std::cout << std::endl;
             auto task = cursor->task();
             const auto stats = task->taskStats();
@@ -783,9 +775,9 @@ static auto &enginePtr(bool initialise = true) {
 
 extern "C" BOSSExpression *evaluate(BOSSExpression *e) {
     static std::mutex m;
-    std::lock_guard lock(m);
+    std::lock_guard const lock(m);
     auto *r = new BOSSExpression{enginePtr()->evaluate(std::move(e->delegate))};
     return r;
-};
+}
 
 extern "C" void reset() { enginePtr(false).reset(nullptr); }

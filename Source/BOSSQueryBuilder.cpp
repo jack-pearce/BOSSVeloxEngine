@@ -1,12 +1,14 @@
 #include "BOSSQueryBuilder.h"
 
+#include <utility>
+
 using namespace facebook::velox;
 using namespace facebook::velox::core;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 
 namespace boss::engines::velox {
-    void mockArrayRelease(BossArray *) {}
+    void mockArrayRelease(BossArray * /*unused*/) {}
 
 // Optionally, holds shared_ptrs pointing to the BossArray object that
 // holds the buffer object that describes the BossArray,
@@ -27,14 +29,6 @@ namespace boss::engines::velox {
         const std::shared_ptr<BossArray> arrayReleaser_;
     };
 
-// Wraps a naked pointer using a Velox buffer view, without copying it. Adding a
-// dummy releaser as the buffer lifetime is fully controled by the client of the API.
-    /*BufferPtr wrapInBufferViewAsViewer(const void *buffer, size_t length) {
-        static const BufferViewReleaser kViewerReleaser;
-        return BufferView<BufferViewReleaser>::create(
-                static_cast<const uint8_t *>(buffer), length, kViewerReleaser);
-    }*/
-
     // Wraps a naked pointer using a Velox buffer view, without copying it. This
     // buffer view uses shared_ptr to manage reference counting and releasing for
     // the BossArray object
@@ -43,11 +37,8 @@ namespace boss::engines::velox {
             size_t length,
             std::shared_ptr<BossArray> arrayReleaser) {
         return BufferView<BufferViewReleaser>::create(
-                static_cast<const uint8_t *>(buffer), length, {BufferViewReleaser(arrayReleaser)});
+                static_cast<const uint8_t *>(buffer), length, {BufferViewReleaser(std::move(arrayReleaser))});
     }
-
-    using WrapInBufferViewFunc =
-            std::function<BufferPtr(const void *buffer, size_t length)>;
 
     // Dispatch based on the type.
     template<TypeKind kind>
@@ -80,22 +71,20 @@ namespace boss::engines::velox {
             case 2:
                 return DOUBLE();
             case 3:
-                return VARCHAR();
-            case 4:
                 return INTEGER();
             default:
                 break;
         }
         VELOX_USER_FAIL(
-                "Unable to convert '{}' BossType format type to Velox.", bossType);
+                "Unable to convert '{}' BossType format type to Velox.", bossType)
     }
 
     VectorPtr importFromBossImpl(
             BossType bossType,
             BossArray &bossArray,
             memory::MemoryPool *pool) {
-        VELOX_USER_CHECK_NOT_NULL(bossArray.release, "bossArray was released.");
-        VELOX_CHECK_GE(bossArray.length, 0, "Array length needs to be non-negative.");
+        VELOX_USER_CHECK_NOT_NULL(bossArray.release, "bossArray was released.")
+        VELOX_CHECK_GE(bossArray.length, 0, "Array length needs to be non-negative.")
 
         // First parse and generate a Velox type.
         auto type = importFromBossType(bossType);
@@ -108,12 +97,12 @@ namespace boss::engines::velox {
         VELOX_CHECK(
                 type->isPrimitiveType(),
                 "Conversion of '{}' from Boss not supported yet.",
-                type->toString());
+                type->toString())
 
         // Wrap the values buffer into a Velox BufferView - zero-copy.
-        auto buffer = bossArray.buffers;
+        const auto *buffer = bossArray.buffers;
         auto length = bossArray.length * type->cppSizeInBytes();
-        std::shared_ptr<BossArray> arrayReleaser(new BossArray(std::move(bossArray)));
+        std::shared_ptr<BossArray> const arrayReleaser(new BossArray(std::move(bossArray)));
         auto values = wrapInBufferViewAsOwner(buffer, length, arrayReleaser);
 
         return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
@@ -125,14 +114,6 @@ namespace boss::engines::velox {
                 bossArray.length,
                 values);
     }
-
-    /*VectorPtr importFromBossAsViewer(
-            BossType bossType,
-            BossArray &bossArray,
-            memory::MemoryPool *pool) {
-        return importFromBossImpl(
-                bossType, bossArray, pool, wrapInBufferViewAsViewer);
-    }*/
 
     VectorPtr importFromBossAsOwner(
             BossType bossType,
@@ -147,35 +128,29 @@ namespace boss::engines::velox {
     }
 
     BufferPtr importFromBossAsOwnerBuffer(BossArray &bossArray) {
-        VELOX_USER_CHECK_NOT_NULL(bossArray.release, "bossArray was released.");
-        VELOX_CHECK_GE(bossArray.length, 0, "Array length needs to be non-negative.");
+        VELOX_USER_CHECK_NOT_NULL(bossArray.release, "bossArray was released.")
+        VELOX_CHECK_GE(bossArray.length, 0, "Array length needs to be non-negative.")
 
         // Wrap the values buffer into a Velox BufferView - zero-copy.
-        auto buffer = bossArray.buffers;
+        const auto *buffer = bossArray.buffers;
         auto length = bossArray.length * 4;
-        std::shared_ptr<BossArray> arrayReleaser(new BossArray(std::move(bossArray)));
+        std::shared_ptr<BossArray> const arrayReleaser(new BossArray(std::move(bossArray)));
         auto values = wrapInBufferViewAsOwner(buffer, length, arrayReleaser);
         return values;
     }
 
-    std::vector<RowVectorPtr> runQuery(const CursorParameters &params, std::unique_ptr<TaskCursor> &cursor) {
+    std::vector<RowVectorPtr> veloxRunQuery(const CursorParameters &params, std::unique_ptr<TaskCursor> &cursor) {
 
         cursor = std::make_unique<TaskCursor>(params);
 
         std::vector<RowVectorPtr> actualResults;
         while (cursor->moveNext()) {
             actualResults.push_back(cursor->current());
-        };
+        }
         return actualResults;
     }
 
-    int64_t toDate(std::string_view stringDate) {
-        Date date;
-        parseTo(stringDate, date);
-        return date.days();
-    }
-
-    void printResults(const std::vector<RowVectorPtr> &results) {
+    void veloxPrintResults(const std::vector<RowVectorPtr> &results) {
         std::cout << "Results:" << std::endl;
         bool printType = true;
         for (const auto &vector: results) {
@@ -190,8 +165,8 @@ namespace boss::engines::velox {
         }
     }
 
-    RowVectorPtr makeRowVector(std::vector<std::string> childNames,
-                               std::vector<VectorPtr> children, memory::MemoryPool *pool) {
+    RowVectorPtr makeRowVectorNoCopy(std::vector<std::string> childNames,
+                                     std::vector<VectorPtr> children, memory::MemoryPool *pool) {
         std::vector<std::shared_ptr<const Type>> childTypes;
         childTypes.resize(children.size());
         for (int i = 0; i < children.size(); i++) {
@@ -204,55 +179,16 @@ namespace boss::engines::velox {
                                            children);
     }
 
-/// DWRF does not support Date type and Varchar is used.
-/// Return the Date filter expression as per data format.
-    std::string formatDateFilter(
-            const std::string &stringDate,
-            const RowTypePtr &rowType,
-            const std::string &lowerBound,
-            const std::string &upperBound) {
-        bool isDwrf = rowType->findChild(stringDate)->isVarchar();
-        auto suffix = isDwrf ? "" : "::DATE";
-
-        if (!lowerBound.empty() && !upperBound.empty()) {
-            return fmt::format(
-                    "{} between {}{} and {}{}",
-                    stringDate,
-                    lowerBound,
-                    suffix,
-                    upperBound,
-                    suffix);
-        } else if (!lowerBound.empty()) {
-            return fmt::format("{} > {}{}", stringDate, lowerBound, suffix);
-        } else if (!upperBound.empty()) {
-            return fmt::format("{} < {}{}", stringDate, upperBound, suffix);
-        }
-
-        VELOX_FAIL(
-                "Date range check expression must have either a lower or an upper bound");
-    }
-
-    RowTypePtr getOutputRowInfo(std::unordered_map<std::string, TypePtr> fileColumnNamesMap,
-                                const std::vector<std::string> &columnNames) {
-        std::vector<std::string> names;
-        std::vector<TypePtr> types;
-        for (auto &columnName: columnNames) {
-            names.push_back(columnName);
-            types.push_back(fileColumnNamesMap.at(columnName));
-        }
-        return std::make_shared<RowType>(std::move(names), std::move(types));
-    }
-
     std::vector<std::string> mergeColumnNames(
             const std::vector<std::string> &firstColumnVector,
             const std::vector<std::string> &secondColumnVector) {
-        std::vector<std::string> mergedColumnVector = std::move(firstColumnVector);
+        std::vector<std::string> mergedColumnVector = firstColumnVector;
         mergedColumnVector.insert(
                 mergedColumnVector.end(),
                 secondColumnVector.begin(),
                 secondColumnVector.end());
         return mergedColumnVector;
-    };
+    }
 
     void QueryBuilder::mergeGreaterFilter(FiledFilter input) {
         if (input.element[0].type == cName) {
@@ -287,8 +223,7 @@ namespace boss::engines::velox {
         curVeloxExpr.fieldFiltersVec.clear();
         curVeloxExpr.hashJoinVec.clear();
         if (curVeloxExpr.tableName == "tmp") {
-            for (auto it = curVeloxExpr.tmpFieldFiltersVec.begin(); it != curVeloxExpr.tmpFieldFiltersVec.end(); ++it) {
-                auto const &filter = *it;
+            for (auto &filter: curVeloxExpr.tmpFieldFiltersVec) {
                 if (filter.opName == "Greater") {
                     if (filter.element[0].type == cName && filter.element[1].type == cValue) {
                         auto tmp = fmt::format("{} > {}", filter.element[0].data,
@@ -317,26 +252,27 @@ namespace boss::engines::velox {
                     auto tmp = fmt::format("{} like '%{}%'", filter.element[0].data,
                                            filter.element[1].data.substr(1, length - 2));
                     curVeloxExpr.remainingFilter = std::move(tmp);
-                } else VELOX_FAIL("unexpected Filter type");
+                } else VELOX_FAIL("unexpected Filter type")
             }
         } else {
             const auto fileColumnNames = curVeloxExpr.fileColumnNamesMap;
-            for (auto it = curVeloxExpr.tmpFieldFiltersVec.begin(); it != curVeloxExpr.tmpFieldFiltersVec.end(); ++it) {
-                auto const &filter = *it;
+            for (auto &filter: curVeloxExpr.tmpFieldFiltersVec) {
                 if (filter.opName == "Greater") {
                     if (filter.element[0].type == cName && filter.element[1].type == cValue) {
                         auto tmp = fmt::format("{} > {}", filter.element[0].data,
                                                filter.element[1].data); // the column name should be on the left side.
-                        if (fileColumnNames.find(filter.element[0].data) == fileColumnNames.end())
+                        if (fileColumnNames.find(filter.element[0].data) == fileColumnNames.end()) {
                             curVeloxExpr.filter = std::move(tmp);  // not belong to any field
-                        else
+                        } else {
                             curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
+                        }
                     } else if (filter.element[1].type == cName && filter.element[0].type == cValue) {
                         auto tmp = fmt::format("{} < {}", filter.element[1].data, filter.element[0].data);
-                        if (fileColumnNames.find(filter.element[1].data) == fileColumnNames.end())
+                        if (fileColumnNames.find(filter.element[1].data) == fileColumnNames.end()) {
                             curVeloxExpr.filter = std::move(tmp);
-                        else
+                        } else {
                             curVeloxExpr.fieldFiltersVec.emplace_back(tmp);
+                        }
                     }
                 } else if (filter.opName == "Between") {
                     auto tmp = fmt::format("{} between {} and {}", filter.element[0].data, filter.element[1].data,
@@ -357,7 +293,7 @@ namespace boss::engines::velox {
                     auto tmp = fmt::format("{} like '%{}%'", filter.element[0].data,
                                            filter.element[1].data.substr(1, length - 2));
                     curVeloxExpr.remainingFilter = std::move(tmp);
-                } else VELOX_FAIL("unexpected Filter type");
+                } else VELOX_FAIL("unexpected Filter type")
             }
         }
     }
@@ -380,8 +316,9 @@ namespace boss::engines::velox {
                         j != i) { // remove column name in the wrong table planBuilder
                         if (std::find(veloxExprList[j].selectedColumns.begin(), veloxExprList[j].selectedColumns.end(),
                                       name) ==
-                            veloxExprList[j].selectedColumns.end())
+                            veloxExprList[j].selectedColumns.end()) {
                             veloxExprList[j].selectedColumns.push_back(name);
+                        }
                         it = veloxExprList[i].selectedColumns.erase(it);
                         resizeFlag = true;
                         break;
@@ -392,8 +329,9 @@ namespace boss::engines::velox {
                         break;
                     }
                 }
-                if (!resizeFlag)
+                if (!resizeFlag) {
                     ++it;
+                }
             }
         }
     }
@@ -401,9 +339,10 @@ namespace boss::engines::velox {
     std::shared_ptr<memory::MemoryPool> QueryBuilder::pool_ = memory::getDefaultMemoryPool();
 
     core::PlanNodePtr QueryBuilder::getVeloxPlanBuilder() {
+        const long MAX_JOIN_WAY = 0xff;
         auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
         std::vector<core::PlanNodePtr> tableMapPlan;
-        std::unordered_map<std::string, int> joinMapPlan;
+        std::unordered_map<std::string, long> joinMapPlan;
         std::vector<std::string> outputLayout;
         for (auto itExpr = veloxExprList.begin(); itExpr != veloxExprList.end(); ++itExpr) {
             auto &veloxExpr = *itExpr;
@@ -425,7 +364,7 @@ namespace boss::engines::velox {
             //project involved columns only
             plan.project(veloxExpr.selectedColumns);
 
-            if (veloxExpr.fieldFiltersVec.size() > 0) {
+            if (!veloxExpr.fieldFiltersVec.empty()) {
                 auto filtersCnt = 0;
                 while (filtersCnt < veloxExpr.fieldFiltersVec.size()) {
                     plan.filter(veloxExpr.fieldFiltersVec[filtersCnt++]);
@@ -443,7 +382,7 @@ namespace boss::engines::velox {
                         auto idxLeft = fileColumnNames.find(leftKey);
                         auto idxRight = fileColumnNames.find(rightKey);
                         if (idxLeft != fileColumnNames.end() && idxRight == fileColumnNames.end()) {
-                            int tableIdx; // find right key table
+                            int tableIdx = 0; // find right key table
                             for (int j = 0; j < columnAliaseList.size(); j++) {
                                 if (columnAliaseList[j].find(rightKey) != columnAliaseList[j].end()) {
                                     tableIdx = j;
@@ -453,21 +392,22 @@ namespace boss::engines::velox {
                             auto tableName = veloxExpr.tableName;
                             auto it = joinMapPlan.find(tableName);
                             if (it == joinMapPlan.end()) {
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
                             }
                             tableName = veloxExprList[tableIdx].tableName;
                             it = joinMapPlan.find(tableName);
                             core::PlanNodePtr build;
                             if (it == joinMapPlan.end()) {  // first time
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 build = tableMapPlan[tableIdx];
                                 outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
                             } else {
-                                if (it->second == 0xff)
+                                if (it->second == MAX_JOIN_WAY) {
                                     build = tableMapPlan[tableIdx];
-                                else
+                                } else {
                                     build = tableMapPlan[it->second];
+                                }
                                 joinMapPlan[tableName] = itExpr - veloxExprList.begin();
                             }
                             plan.hashJoin(
@@ -477,7 +417,7 @@ namespace boss::engines::velox {
                                     "",
                                     outputLayout);
                         } else if (idxLeft == fileColumnNames.end() && idxRight != fileColumnNames.end()) {
-                            int tableIdx; // find left key table
+                            int tableIdx = 0; // find left key table
                             for (int j = 0; j < columnAliaseList.size(); j++) {
                                 if (columnAliaseList[j].find(leftKey) != columnAliaseList[j].end()) {
                                     tableIdx = j;
@@ -487,21 +427,22 @@ namespace boss::engines::velox {
                             auto tableName = veloxExpr.tableName;
                             auto it = joinMapPlan.find(tableName);
                             if (it == joinMapPlan.end()) {
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
                             }
                             tableName = veloxExprList[tableIdx].tableName;
                             it = joinMapPlan.find(tableName);
                             core::PlanNodePtr build;
                             if (it == joinMapPlan.end()) {  // first time
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 build = tableMapPlan[tableIdx];
                                 outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
                             } else {
-                                if (it->second == 0xff)
+                                if (it->second == MAX_JOIN_WAY) {
                                     build = tableMapPlan[tableIdx];
-                                else
+                                } else {
                                     build = tableMapPlan[it->second];
+                                }
                                 joinMapPlan[tableName] = itExpr - veloxExprList.begin();
                             }
                             plan.hashJoin(
@@ -511,14 +452,14 @@ namespace boss::engines::velox {
                                     "",
                                     outputLayout);
                         } else {  // both left and right key are not in the current table
-                            int tableLeft; // find left key table
+                            int tableLeft = 0; // find left key table
                             for (int j = 0; j < columnAliaseList.size(); j++) {
                                 if (columnAliaseList[j].find(leftKey) != columnAliaseList[j].end()) {
                                     tableLeft = j;
                                     break;
                                 }
                             }
-                            int tableRight; // find right key table
+                            int tableRight = 0; // find right key table
                             for (int j = 0; j < columnAliaseList.size(); j++) {
                                 if (columnAliaseList[j].find(rightKey) != columnAliaseList[j].end()) {
                                     tableRight = j;
@@ -528,21 +469,22 @@ namespace boss::engines::velox {
                             auto tableName = veloxExprList[tableRight].tableName;
                             auto it = joinMapPlan.find(tableName);
                             if (it == joinMapPlan.end()) {
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
                             }
                             tableName = veloxExprList[tableLeft].tableName;
                             it = joinMapPlan.find(tableName);
                             core::PlanNodePtr build;
                             if (it == joinMapPlan.end()) {  // first time
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 build = tableMapPlan[tableLeft];
                                 outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableLeft].selectedColumns);
                             } else {
-                                if (it->second == 0xff)
+                                if (it->second == MAX_JOIN_WAY) {
                                     build = tableMapPlan[tableLeft];
-                                else
+                                } else {
                                     build = tableMapPlan[it->second];
+                                }
                                 joinMapPlan[tableName] = itExpr - veloxExprList.begin();
                             }
                             plan.hashJoin(
@@ -560,7 +502,7 @@ namespace boss::engines::velox {
                         auto idxLeft = fileColumnNames.find(hashJoinPair.leftKey);
                         auto idxRight = fileColumnNames.find(hashJoinPair.rightKey);
                         if (idxLeft != fileColumnNames.end() && idxRight == fileColumnNames.end()) {
-                            int tableIdx; // find right key table
+                            int tableIdx = 0; // find right key table
                             for (int j = 0; j < columnAliaseList.size(); j++) {
                                 if (columnAliaseList[j].find(hashJoinPair.rightKey) != columnAliaseList[j].end()) {
                                     tableIdx = j;
@@ -570,21 +512,22 @@ namespace boss::engines::velox {
                             auto tableName = veloxExpr.tableName;
                             auto it = joinMapPlan.find(tableName);
                             if (it == joinMapPlan.end()) {
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
                             }
                             tableName = veloxExprList[tableIdx].tableName;
                             it = joinMapPlan.find(tableName);
                             core::PlanNodePtr build;
                             if (it == joinMapPlan.end()) {  // first time
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 build = tableMapPlan[tableIdx];
                                 outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
                             } else {
-                                if (it->second == 0xff)
+                                if (it->second == MAX_JOIN_WAY) {
                                     build = tableMapPlan[tableIdx];
-                                else
+                                } else {
                                     build = tableMapPlan[it->second];
+                                }
                                 joinMapPlan[tableName] = itExpr - veloxExprList.begin();
                             }
                             plan.hashJoin(
@@ -594,7 +537,7 @@ namespace boss::engines::velox {
                                     "",
                                     outputLayout);
                         } else if (idxLeft == fileColumnNames.end() && idxRight != fileColumnNames.end()) {
-                            int tableIdx; // find left key table
+                            int tableIdx = 0; // find left key table
                             for (int j = 0; j < columnAliaseList.size(); j++) {
                                 if (columnAliaseList[j].find(hashJoinPair.leftKey) != columnAliaseList[j].end()) {
                                     tableIdx = j;
@@ -604,21 +547,22 @@ namespace boss::engines::velox {
                             auto tableName = veloxExpr.tableName;
                             auto it = joinMapPlan.find(tableName);
                             if (it == joinMapPlan.end()) {
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
                             }
                             tableName = veloxExprList[tableIdx].tableName;
                             it = joinMapPlan.find(tableName);
                             core::PlanNodePtr build;
                             if (it == joinMapPlan.end()) {  // first time
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 build = tableMapPlan[tableIdx];
                                 outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
                             } else {
-                                if (it->second == 0xff)
+                                if (it->second == MAX_JOIN_WAY) {
                                     build = tableMapPlan[tableIdx];
-                                else
+                                } else {
                                     build = tableMapPlan[it->second];
+                                }
                                 joinMapPlan[tableName] = itExpr - veloxExprList.begin();
                             }
                             plan.hashJoin(
@@ -628,14 +572,14 @@ namespace boss::engines::velox {
                                     "",
                                     outputLayout);
                         } else {  // both left and right key are not in the current table
-                            int tableLeft; // find left key table
+                            int tableLeft = 0; // find left key table
                             for (int j = 0; j < columnAliaseList.size(); j++) {
                                 if (columnAliaseList[j].find(hashJoinPair.leftKey) != columnAliaseList[j].end()) {
                                     tableLeft = j;
                                     break;
                                 }
                             }
-                            int tableRight; // find right key table
+                            int tableRight = 0; // find right key table
                             for (int j = 0; j < columnAliaseList.size(); j++) {
                                 if (columnAliaseList[j].find(hashJoinPair.rightKey) != columnAliaseList[j].end()) {
                                     tableRight = j;
@@ -645,21 +589,22 @@ namespace boss::engines::velox {
                             auto tableName = veloxExprList[tableRight].tableName;
                             auto it = joinMapPlan.find(tableName);
                             if (it == joinMapPlan.end()) {
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
                             }
                             tableName = veloxExprList[tableLeft].tableName;
                             it = joinMapPlan.find(tableName);
                             core::PlanNodePtr build;
                             if (it == joinMapPlan.end()) {  // first time
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 build = tableMapPlan[tableLeft];
                                 outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableLeft].selectedColumns);
                             } else {
-                                if (it->second == 0xff)
+                                if (it->second == MAX_JOIN_WAY) {
                                     build = tableMapPlan[tableLeft];
-                                else
+                                } else {
                                     build = tableMapPlan[it->second];
+                                }
                                 joinMapPlan[tableName] = itExpr - veloxExprList.begin();
                             }
                             plan.hashJoin(
@@ -678,7 +623,7 @@ namespace boss::engines::velox {
                         auto idxLeft = fileColumnNames.find(hashJoinPair.leftKey);
                         auto idxRight = fileColumnNames.find(hashJoinPair.rightKey);
                         if (idxLeft != fileColumnNames.end() && idxRight == fileColumnNames.end()) {
-                            int tableIdx; // find right key table
+                            int tableIdx = 0; // find right key table
                             for (int j = 0; j < columnAliaseList.size(); j++) {
                                 if (columnAliaseList[j].find(hashJoinPair.rightKey) != columnAliaseList[j].end()) {
                                     tableIdx = j;
@@ -688,21 +633,22 @@ namespace boss::engines::velox {
                             auto tableName = veloxExpr.tableName;
                             auto it = joinMapPlan.find(tableName);
                             if (it == joinMapPlan.end()) {
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
                             }
                             tableName = veloxExprList[tableIdx].tableName;
                             it = joinMapPlan.find(tableName);
                             core::PlanNodePtr build;
                             if (it == joinMapPlan.end()) {  // first time
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 build = tableMapPlan[tableIdx];
                                 outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
                             } else {
-                                if (it->second == 0xff)
+                                if (it->second == MAX_JOIN_WAY) {
                                     build = tableMapPlan[tableIdx];
-                                else
+                                } else {
                                     build = tableMapPlan[it->second];
+                                }
                                 joinMapPlan[tableName] = itExpr - veloxExprList.begin();
                             }
                             plan.hashJoin(
@@ -712,7 +658,7 @@ namespace boss::engines::velox {
                                     "",
                                     outputLayout);
                         } else if (idxLeft == fileColumnNames.end() && idxRight != fileColumnNames.end()) {
-                            int tableIdx; // find left key table
+                            int tableIdx = 0; // find left key table
                             for (int j = 0; j < columnAliaseList.size(); j++) {
                                 if (columnAliaseList[j].find(hashJoinPair.leftKey) != columnAliaseList[j].end()) {
                                     tableIdx = j;
@@ -722,21 +668,22 @@ namespace boss::engines::velox {
                             auto tableName = veloxExpr.tableName;
                             auto it = joinMapPlan.find(tableName);
                             if (it == joinMapPlan.end()) {
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
                             }
                             tableName = veloxExprList[tableIdx].tableName;
                             it = joinMapPlan.find(tableName);
                             core::PlanNodePtr build;
                             if (it == joinMapPlan.end()) {  // first time
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 build = tableMapPlan[tableIdx];
                                 outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
                             } else {
-                                if (it->second == 0xff)
+                                if (it->second == MAX_JOIN_WAY) {
                                     build = tableMapPlan[tableIdx];
-                                else
+                                } else {
                                     build = tableMapPlan[it->second];
+                                }
                                 joinMapPlan[tableName] = itExpr - veloxExprList.begin();
                             }
                             plan.hashJoin(
@@ -746,14 +693,14 @@ namespace boss::engines::velox {
                                     "",
                                     outputLayout);
                         } else {  // both left and right key are not in the current table
-                            int tableLeft; // find left key table
+                            int tableLeft = 0; // find left key table
                             for (int j = 0; j < columnAliaseList.size(); j++) {
                                 if (columnAliaseList[j].find(hashJoinPair.leftKey) != columnAliaseList[j].end()) {
                                     tableLeft = j;
                                     break;
                                 }
                             }
-                            int tableRight; // find right key table
+                            int tableRight = 0; // find right key table
                             for (int j = 0; j < columnAliaseList.size(); j++) {
                                 if (columnAliaseList[j].find(hashJoinPair.rightKey) != columnAliaseList[j].end()) {
                                     tableRight = j;
@@ -763,21 +710,22 @@ namespace boss::engines::velox {
                             auto tableName = veloxExprList[tableRight].tableName;
                             auto it = joinMapPlan.find(tableName);
                             if (it == joinMapPlan.end()) {
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
                             }
                             tableName = veloxExprList[tableLeft].tableName;
                             it = joinMapPlan.find(tableName);
                             core::PlanNodePtr build;
                             if (it == joinMapPlan.end()) {  // first time
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 build = tableMapPlan[tableLeft];
                                 outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableLeft].selectedColumns);
                             } else {
-                                if (it->second == 0xff)
+                                if (it->second == MAX_JOIN_WAY) {
                                     build = tableMapPlan[tableLeft];
-                                else
+                                } else {
                                     build = tableMapPlan[it->second];
+                                }
                                 joinMapPlan[tableName] = itExpr - veloxExprList.begin();
                             }
                             plan.hashJoin(
@@ -798,7 +746,7 @@ namespace boss::engines::velox {
                         auto idxLeft = fileColumnNames.find(leftKey);
                         auto idxRight = fileColumnNames.find(rightKey);
                         if (idxLeft != fileColumnNames.end() && idxRight == fileColumnNames.end()) {
-                            int tableIdx; // find right key table
+                            int tableIdx = 0; // find right key table
                             for (int j = 0; j < columnAliaseList.size(); j++) {
                                 if (columnAliaseList[j].find(rightKey) != columnAliaseList[j].end()) {
                                     tableIdx = j;
@@ -808,21 +756,22 @@ namespace boss::engines::velox {
                             auto tableName = veloxExpr.tableName;
                             auto it = joinMapPlan.find(tableName);
                             if (it == joinMapPlan.end()) {
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
                             }
                             tableName = veloxExprList[tableIdx].tableName;
                             it = joinMapPlan.find(tableName);
                             core::PlanNodePtr build;
                             if (it == joinMapPlan.end()) {  // first time
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 build = tableMapPlan[tableIdx];
                                 outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
                             } else {
-                                if (it->second == 0xff)
+                                if (it->second == MAX_JOIN_WAY) {
                                     build = tableMapPlan[tableIdx];
-                                else
+                                } else {
                                     build = tableMapPlan[it->second];
+                                }
                                 joinMapPlan[tableName] = itExpr - veloxExprList.begin();
                             }
                             plan.hashJoin(
@@ -832,7 +781,7 @@ namespace boss::engines::velox {
                                     "",
                                     outputLayout);
                         } else if (idxLeft == fileColumnNames.end() && idxRight != fileColumnNames.end()) {
-                            int tableIdx; // find left key table
+                            int tableIdx = 0; // find left key table
                             for (int j = 0; j < columnAliaseList.size(); j++) {
                                 if (columnAliaseList[j].find(leftKey) != columnAliaseList[j].end()) {
                                     tableIdx = j;
@@ -842,21 +791,22 @@ namespace boss::engines::velox {
                             auto tableName = veloxExpr.tableName;
                             auto it = joinMapPlan.find(tableName);
                             if (it == joinMapPlan.end()) {
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
                             }
                             tableName = veloxExprList[tableIdx].tableName;
                             it = joinMapPlan.find(tableName);
                             core::PlanNodePtr build;
                             if (it == joinMapPlan.end()) {  // first time
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 build = tableMapPlan[tableIdx];
                                 outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
                             } else {
-                                if (it->second == 0xff)
+                                if (it->second == MAX_JOIN_WAY) {
                                     build = tableMapPlan[tableIdx];
-                                else
+                                } else {
                                     build = tableMapPlan[it->second];
+                                }
                                 joinMapPlan[tableName] = itExpr - veloxExprList.begin();
                             }
                             plan.hashJoin(
@@ -866,14 +816,14 @@ namespace boss::engines::velox {
                                     "",
                                     outputLayout);
                         } else {  // both left and right key are not in the current table
-                            int tableLeft; // find left key table
+                            int tableLeft = 0; // find left key table
                             for (int j = 0; j < columnAliaseList.size(); j++) {
                                 if (columnAliaseList[j].find(leftKey) != columnAliaseList[j].end()) {
                                     tableLeft = j;
                                     break;
                                 }
                             }
-                            int tableRight; // find right key table
+                            int tableRight = 0; // find right key table
                             for (int j = 0; j < columnAliaseList.size(); j++) {
                                 if (columnAliaseList[j].find(rightKey) != columnAliaseList[j].end()) {
                                     tableRight = j;
@@ -883,21 +833,22 @@ namespace boss::engines::velox {
                             auto tableName = veloxExprList[tableRight].tableName;
                             auto it = joinMapPlan.find(tableName);
                             if (it == joinMapPlan.end()) {
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 outputLayout = mergeColumnNames(outputLayout, veloxExpr.selectedColumns);
                             }
                             tableName = veloxExprList[tableLeft].tableName;
                             it = joinMapPlan.find(tableName);
                             core::PlanNodePtr build;
                             if (it == joinMapPlan.end()) {  // first time
-                                joinMapPlan.emplace(tableName, 0xff);
+                                joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
                                 build = tableMapPlan[tableLeft];
                                 outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableLeft].selectedColumns);
                             } else {
-                                if (it->second == 0xff)
+                                if (it->second == MAX_JOIN_WAY) {
                                     build = tableMapPlan[tableLeft];
-                                else
+                                } else {
                                     build = tableMapPlan[it->second];
+                                }
                                 joinMapPlan[tableName] = itExpr - veloxExprList.begin();
                             }
                             plan.hashJoin(
