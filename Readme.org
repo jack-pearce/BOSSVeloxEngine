@@ -1,6 +1,23 @@
 * BOSSVeloxEngine
-*** Configuring
-CMake flags:
-: -DVELOX_DIRS=
-: -DCMAKE_C_COMPILER=/usr/bin/clang
-: -DCMAKE_CXX_COMPILER=/usr/bin/clang++
+
+*** Dependencies
+: sudo apt install libthrift-dev uuid-dev
+
+*** Get the Velox Source
+: git clone --recursive https://github.com/facebookincubator/velox.git
+: cd velox
+# if you are updating an existing checkout
+: git submodule sync --recursive
+: git submodule update --init --recursive
+
+*** Setting up on x86_64 Linux (Ubuntu 22.04)
+: ./scripts/setup-ubuntu.sh
+
+*** Build BOSSVeloxEngine
+: git clone https://github.com/symbol-store/BOSSVeloxEngine.git
+: cd BOSSVeloxEngine
+: mkdir build
+: cd build
+: cmake -DGITHUB_TOKEN=***REMOVED*** -DVELOX_DIRS=DIR_VELOX_SOURCE -DCMAKE_C_COMPILER=clang-14 -DCMAKE_CXX_COMPILER=clang++-14 -DCMAKE_BUILD_TYPE=Release ..
+: cd ..
+: cmake --build build -j6

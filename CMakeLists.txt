@@ -121,6 +121,7 @@ target_link_libraries(
         velox_parse_parser
         atomic
 )
+#copy from VLDB submission artifact
 target_compile_options(BOSSVeloxEngine PUBLIC -DARROW_STATIC -msse4.2 -DFOLLY_CFG_NO_COROUTINES -DFOLLY_HAS_COROUTINES=0)
 if (UNIX AND NOT APPLE)
     target_link_libraries(BOSSVeloxEngine uuid)
