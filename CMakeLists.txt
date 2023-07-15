@@ -85,7 +85,7 @@ endif ()
 
 #################################### Targets ####################################
 
-set(ImplementationFiles Source/BOSSVeloxEngine.cpp Source/BOSSQueryBuilder.cpp
+set(ImplementationFiles Source/BOSSVeloxEngine.cpp Source/BOSSQueryBuilder.cpp Source/BridgeVelox.cpp
         ${VELOX_DIRS}/velox/exec/tests/utils/PlanBuilder.cpp
         ${VELOX_DIRS}/velox/exec/tests/utils/Cursor.cpp)
 
