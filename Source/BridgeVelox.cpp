@@ -1,4 +1,4 @@
-//Data structures and functions are referenced/copied from Velox prototype for Arrow Velox conversion.
+//Data structures and functions in this file are referenced/copied from Velox prototype for Arrow Velox conversion.
 
 #include "BridgeVelox.h"
 
@@ -80,7 +80,7 @@ namespace boss::engines::velox {
                 "Unable to convert '{}' BossType format type to Velox.", bossType)
     }
 
-    VectorPtr importFromBossImpl(
+    VectorPtr importFromBossAsOwner(
             BossType bossType,
             BossArray &bossArray,
             memory::MemoryPool *pool) {
@@ -113,16 +113,6 @@ namespace boss::engines::velox {
                 nulls,
                 bossArray.length,
                 values);
-    }
-
-    VectorPtr importFromBossAsOwner(
-            BossType bossType,
-            BossArray &bossArray,
-            memory::MemoryPool *pool) {
-
-        VectorPtr imported = importFromBossImpl(bossType, bossArray, pool);
-
-        return imported;
     }
 
     BufferPtr importFromBossAsOwnerBuffer(BossArray &bossArray) {
