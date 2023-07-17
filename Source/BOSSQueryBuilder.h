@@ -1,4 +1,5 @@
 #pragma once
+
 #include "BridgeVelox.h"
 
 namespace boss::engines::velox {
@@ -31,6 +32,9 @@ namespace boss::engines::velox {
         std::string op;
         std::string oldName;
         std::string newName;
+
+        aggrPair(std::string op_in, std::string oldName_in, std::string newName_in)
+                : op(std::move(op_in)), oldName(std::move(oldName_in)), newName(std::move(newName_in)) {}
     };
 
     struct JoinPairList {
@@ -111,6 +115,20 @@ namespace boss::engines::velox {
         void reformVeloxExpr();
 
         core::PlanNodePtr getVeloxPlanBuilder();
+
+        void getTableMeta(ComplexExpression &&expression);
+
+        void add_tmpFieldFilter(std::string data, ColumnType type);
+
+        void add_selectedColumns(const std::string &colName);
+
+        void postTransFilter_Join(const std::string &headName);
+
+        void postTransProj_PartialAggr(std::vector<std::string> &projectionList,
+                                       std::vector<std::string> lastProjectionsVec,
+                                       const std::string &projectionName);
+
+        void postTransSum(const std::string &oldName);
     };
 
 } // namespace boss::engines::velox

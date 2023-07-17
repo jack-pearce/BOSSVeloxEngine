@@ -2,6 +2,88 @@
 
 namespace boss::engines::velox {
 
+    void QueryBuilder::add_tmpFieldFilter(std::string data, ColumnType type) {
+        AtomicExpr element;
+        element.data = std::move(data);
+        element.type = type;
+        tmpFieldFilter.element.emplace_back(element);
+    }
+
+    // avoid repeated selectedColumns
+    void QueryBuilder::add_selectedColumns(const std::string &colName) {
+        if (std::find(curVeloxExpr.selectedColumns.begin(),
+                      curVeloxExpr.selectedColumns.end(),
+                      colName) == curVeloxExpr.selectedColumns.end()) {
+            curVeloxExpr.selectedColumns.push_back(colName);
+        }
+    }
+
+    void QueryBuilder::postTransFilter_Join(const std::string &headName) {
+        if (!tmpFieldFilter.opName.empty()) {
+            if (headName == "Greater") {
+                mergeGreaterFilter(tmpFieldFilter);
+            } else if ((headName == "Equal" || headName == "StringContainsQ") &&
+                       !tmpFieldFilter.element.empty()) {
+                curVeloxExpr.tmpFieldFiltersVec.push_back(tmpFieldFilter);
+            }
+        }
+        if (headName == "List") {
+            if (!tmpJoinPairList.leftFlag) {
+                tmpJoinPairList.leftFlag = true;
+            } else {
+                curVeloxExpr.hashJoinListVec.push_back(tmpJoinPairList);
+                if (!curVeloxExpr.hashJoinVec.empty()) {
+                    curVeloxExpr.delayJoinList = true;
+                }
+                tmpJoinPairList.clear();
+            }
+        }
+    }
+
+    void QueryBuilder::postTransProj_PartialAggr(std::vector<std::string> &projectionList,
+                                                 std::vector<std::string> lastProjectionsVec,
+                                                 const std::string &projectionName) {
+        // fill the new name for aggregation
+        if (!curVeloxExpr.aggregatesVec.empty()) {
+            auto &aggregation = curVeloxExpr.aggregatesVec.back();
+            if (aggregation.newName == "") {
+                aggregation.newName = projectionName;
+                curVeloxExpr.orderBy = true;
+            }
+            curVeloxExpr.projectionsVec = std::move(lastProjectionsVec);
+        } else {
+            std::string projection;
+            if (projectionList[0] != projectionName) {
+                projection = fmt::format("{} AS {}", projectionList[0],
+                                         projectionName);
+            } else {
+                auto it = projNameMap.find(projectionName);
+                if (it != projNameMap.end() && it->second != it->first) {
+                    auto tmp = fmt::format("{} AS {}", it->second, it->first);
+                    projection = tmp; // e.g. cal AS cal
+                } else {
+                    projection = projectionList[0]; // e.g. col0 AS col0
+                }
+            }
+            curVeloxExpr.projectionsVec.push_back(projection);
+            // avoid repeated projectionMap
+            auto it = projNameMap.find(projectionName);
+            if (it == projNameMap.end()) {
+                projNameMap.emplace(projectionName, projectionList[0]);
+            }
+        }
+    }
+
+    void QueryBuilder::postTransSum(const std::string &oldName) {
+        auto aName = fmt::format("a{}", aggrNameMap.size());
+        aggrPair const aggregation("sum", oldName, aName);
+        curVeloxExpr.aggregatesVec.push_back(aggregation);
+        // new implicit name for maybe later orderBy
+        aggrNameMap.emplace(aggregation.oldName, aName);
+        curVeloxExpr.orderBy = true;
+        add_selectedColumns(aggregation.oldName);
+    }
+
     std::vector<std::string> mergeColumnNames(
             const std::vector<std::string> &firstColumnVector,
             const std::vector<std::string> &secondColumnVector) {
