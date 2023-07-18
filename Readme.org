@@ -18,6 +18,6 @@ if you are updating an existing checkout
 : cd BOSSVeloxEngine
 : mkdir build
 : cd build
-: cmake -DGITHUB_TOKEN=***REMOVED*** -DVELOX_DIRS=DIR_VELOX_SOURCE -DCMAKE_C_COMPILER=clang-14 -DCMAKE_CXX_COMPILER=clang++-14 -DCMAKE_BUILD_TYPE=Release ..
+: cmake -DGITHUB_TOKEN=... -DVELOX_DIRS=DIR_VELOX_SOURCE -DCMAKE_C_COMPILER=clang-14 -DCMAKE_CXX_COMPILER=clang++-14 -DCMAKE_BUILD_TYPE=Release ..
 : cd ..
 : cmake --build build -j6
