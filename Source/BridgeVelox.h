@@ -13,16 +13,15 @@ using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 
 namespace boss::engines::velox {
-    using VeloxExpressionSystem = ExtensibleExpressionSystem<>;
-    using ExpressionSpanArgument = VeloxExpressionSystem::ExpressionSpanArgument;
-    /**
- *     bool = 0, long = 1, double = 2, int = 3
- */
+    using ExpressionSpanArgument = boss::expressions::ExpressionSpanArgument;
+/**
+     int = 0, long = 1, double = 2
+**/
+
     enum BossType {
-        bBOOL = 0,
+        bINTEGER = 0,
         bBIGINT,
-        bDOUBLE,
-        bINTEGER
+        bDOUBLE
     };
 
     struct BossArray {

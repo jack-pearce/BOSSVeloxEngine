@@ -66,13 +66,11 @@ namespace boss::engines::velox {
     TypePtr importFromBossType(BossType &bossType) {
         switch (bossType) {
             case 0:
-                return BOOLEAN();
+                return INTEGER();
             case 1:
                 return BIGINT();
             case 2:
                 return DOUBLE();
-            case 3:
-                return INTEGER();
             default:
                 break;
         }

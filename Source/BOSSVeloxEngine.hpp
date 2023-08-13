@@ -32,7 +32,7 @@ namespace boss::engines::velox {
 
         boss::Expression evaluate(boss::ComplexExpression &&e);
 
-        std::shared_ptr<folly::Executor> executor_;
+        std::shared_ptr<folly::Executor> executor_; // execute Velox physical plan, e.g. projection
         CursorParameters params;
         std::unique_ptr<TaskCursor> cursor;
 

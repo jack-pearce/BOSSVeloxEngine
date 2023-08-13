@@ -1,4 +1,5 @@
 #include "BOSSVeloxEngine.hpp"
+#include "BOSSCoreTmp.h"
 
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
@@ -50,57 +51,22 @@ std::ostream &operator<<(std::ostream &s, std::vector<std::int64_t> const &input
 
 namespace boss {
     using std::vector;
-//    using SpanInputs = std::variant<vector<bool>, vector<std::int64_t>, vector<std::double_t>,
-//            vector<std::string>, vector<Symbol>>;
-    using SpanInputs = std::variant</*vector<bool>, */ std::vector<std::int32_t>, vector<std::int64_t>, vector<std::double_t>,
+    using SpanInputs = std::variant<std::vector<std::int32_t>, vector<std::int64_t>, vector<std::double_t>,
             vector<std::string>, vector<Symbol>>;
 } // namespace boss
 
 namespace boss::engines::velox {
-    using VeloxExpressionSystem = ExtensibleExpressionSystem<>;
-    using ComplexExpression = VeloxExpressionSystem::ComplexExpression;
+    using ComplexExpression = boss::expressions::ComplexExpression;
     template<typename... T>
     using ComplexExpressionWithStaticArguments =
-            VeloxExpressionSystem::ComplexExpressionWithStaticArguments<T...>;
-    using Expression = VeloxExpressionSystem::Expression;
-    using ExpressionArguments = VeloxExpressionSystem::ExpressionArguments;
-    using ExpressionSpanArguments = VeloxExpressionSystem::ExpressionSpanArguments;
-    using ExpressionSpanArgument = VeloxExpressionSystem::ExpressionSpanArgument;
+            boss::expressions::ComplexExpressionWithStaticArguments<T...>;
+    using Expression = boss::expressions::Expression;
+    using ExpressionArguments = boss::expressions::ExpressionArguments;
+    using ExpressionSpanArguments = boss::expressions::ExpressionSpanArguments;
+    using ExpressionSpanArgument = boss::expressions::ExpressionSpanArgument;
     using expressions::generic::ArgumentWrapper;
     using expressions::generic::ExpressionArgumentsWithAdditionalCustomAtomsWrapper;
 
-// reference counter class to track references for Span and af::array pointers to memory
-// calling a destructor once the reference count reaches 0
-    class SpanReferenceCounter {
-    public:
-        // call destructor only for the initial caller of add(), who is the owner of the data
-        void add(void *data, std::function<void(void)> &&destructor = {}) {
-            auto &info = map.try_emplace(data, std::move(destructor)).first->second;
-            info.counter++;
-        }
-
-        void remove(void *data) {
-            auto it = map.find(data);
-            if (--it->second.counter == 0) {
-                if (it->second.destructor) {
-                    it->second.destructor();
-                }
-                map.erase(it);
-            }
-        }
-
-    private:
-        struct Info {
-            std::function<void(void)> destructor;
-            unsigned int counter = 0;
-
-            explicit Info(std::function<void(void)> &&f) : destructor(std::move(f)) {}
-        };
-
-        unordered_map<void *, Info> map;
-    };
-
-    static SpanReferenceCounter spanReferenceCounter;
 
     int32_t dateToInt32(const std::string &str) {
         std::istringstream iss;
