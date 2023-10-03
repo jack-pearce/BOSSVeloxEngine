@@ -67,8 +67,10 @@ namespace boss::engines::velox {
         std::vector<JoinPairList> hashJoinListVec;
         std::string filter;  // can be used to filter non-field clause
         std::vector<RowVectorPtr> rowDataVec;
+        RowTypePtr tableSchema;
         std::unordered_map<std::string, TypePtr> fileColumnNamesMap;
         std::vector<BufferPtr> indicesVec;
+        std::vector<size_t> spanRowCountVec;
 
         void clear() {
             limit = 0;
@@ -89,6 +91,7 @@ namespace boss::engines::velox {
             filter.clear();
             rowDataVec.clear();
             indicesVec.clear();
+            spanRowCountVec.clear();
         }
     };
 
@@ -114,7 +117,7 @@ namespace boss::engines::velox {
 
         void reformVeloxExpr();
 
-        core::PlanNodePtr getVeloxPlanBuilder();
+        core::PlanNodePtr getVeloxPlanBuilder(std::vector<core::PlanNodeId> &scanIds);
 
         void getTableMeta(ComplexExpression &&expression);
 

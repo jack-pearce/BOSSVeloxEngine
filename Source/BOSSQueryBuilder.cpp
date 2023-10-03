@@ -211,7 +211,7 @@ namespace boss::engines::velox {
 
     std::shared_ptr<memory::MemoryPool> QueryBuilder::pool_ = memory::getDefaultMemoryPool();
 
-    core::PlanNodePtr QueryBuilder::getVeloxPlanBuilder() {
+    core::PlanNodePtr QueryBuilder::getVeloxPlanBuilder(std::vector<core::PlanNodeId> &scanIds) {
         const long MAX_JOIN_WAY = 0xff;
         auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
         std::vector<core::PlanNodePtr> tableMapPlan;
@@ -221,9 +221,28 @@ namespace boss::engines::velox {
         for (auto itExpr = veloxExprList.begin(); itExpr != veloxExprList.end(); ++itExpr) {
             auto &veloxExpr = *itExpr;
             const auto &fileColumnNames = veloxExpr.fileColumnNamesMap;
+            core::PlanNodeId scanId;
 
+            auto assignColumns = [](std::vector<std::string> names) {
+              std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
+                  assignmentsMap;
+              assignmentsMap.reserve(names.size());
+              for(auto& name : names) {
+                assignmentsMap.emplace(name, std::make_shared<BossColumnHandle>(name));
+              }
+              return assignmentsMap;
+            };
+
+            auto assignmentsMap = assignColumns(veloxExpr.tableSchema->names());
             auto plan = PlanBuilder(planNodeIdGenerator)
-                    .values(veloxExpr.rowDataVec);
+                        .tableScan(veloxExpr.tableSchema,
+                                   std::make_shared<BossTableHandle>(
+                                       kBossConnectorId, veloxExpr.tableName, veloxExpr.tableSchema,
+                                       veloxExpr.rowDataVec, veloxExpr.spanRowCountVec),
+                                   assignmentsMap)
+                        .capturePlanNodeId(scanId);
+
+            scanIds.emplace_back(scanId);
 
             // nothing happened for a table, projection for all columns
             if (veloxExpr.selectedColumns.empty()) {

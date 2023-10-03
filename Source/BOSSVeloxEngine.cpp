@@ -418,15 +418,16 @@ namespace boss::engines::velox {
 // "Table"_("Column"_("Id"_, "List"_(1, 2, 3), "Column"_("Value"_ "List"_(0.1, 10.0, 5.2)))
     std::unordered_map<std::string, TypePtr> getColumns(
             ComplexExpression &&expression, std::vector<BufferPtr> indicesVec,
-            std::vector<RowVectorPtr> &rowDataVec, memory::MemoryPool *pool) {
+            std::vector<RowVectorPtr> &rowDataVec, RowTypePtr &tableSchema, std::vector<size_t> &spanRowCountVec, memory::MemoryPool *pool) {
         ExpressionArguments columns = std::move(expression).getArguments();
         std::vector<std::string> colNameVec;
+        std::vector<std::shared_ptr<const Type>> colTypeVec;
         std::vector<std::vector<VectorPtr>> colDataListVec;
         std::unordered_map<std::string, TypePtr> fileColumnNamesMap(columns.size());
 
         std::for_each(
                 std::make_move_iterator(columns.begin()), std::make_move_iterator(columns.end()),
-                [&colNameVec, &colDataListVec, pool, &fileColumnNamesMap, &indicesVec](
+                [&colNameVec, &colTypeVec, &colDataListVec, pool, &fileColumnNamesMap, &indicesVec](
                         auto &&columnExpr) {
                     auto column = get < ComplexExpression > (std::forward<decltype(columnExpr)>(columnExpr));
                     auto [head, unused_, dynamics, spans] = std::move(column).decompose();
@@ -459,12 +460,14 @@ namespace boss::engines::velox {
                     }
                     auto columnType = colDataVec[0]->type();
                     colNameVec.emplace_back(columnName.getName());
+                    colTypeVec.emplace_back(columnType);
                     fileColumnNamesMap.insert(std::make_pair(columnName.getName(), columnType));
                     colDataListVec.push_back(std::move(colDataVec));
                 });
 
         auto listSize = colDataListVec[0].size();
         for (auto i = 0; i < listSize; i++) {
+            spanRowCountVec.push_back(colDataListVec[0][i]->size());
             std::vector<VectorPtr> rowData;
             for (auto j = 0; j < columns.size(); j++) {
                 assert(colDataListVec[j].size() == listSize);
@@ -474,6 +477,7 @@ namespace boss::engines::velox {
             rowDataVec.push_back(std::move(rowVector));
         }
 
+        tableSchema = TypeFactory<TypeKind::ROW>::create(std::move(colNameVec), std::move(colTypeVec));
         return fileColumnNamesMap;
     }
 
@@ -508,6 +512,8 @@ namespace boss::engines::velox {
         curVeloxExpr.fileColumnNamesMap = getColumns(std::move(expression),
                                                      curVeloxExpr.indicesVec,
                                                      curVeloxExpr.rowDataVec,
+                                                     curVeloxExpr.tableSchema,
+                                                     curVeloxExpr.spanRowCountVec,
                                                      pool_.get());
     }
 
@@ -593,21 +599,27 @@ namespace boss::engines::velox {
         return std::move(e);
     }
 
-    boss::Expression Engine::evaluate(boss::ComplexExpression &&e) {
+    boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
         QueryBuilder queryBuilder;
         bossExprToVelox(std::move(e), queryBuilder);
-        if (queryBuilder.tableCnt != 0) {
+        if(queryBuilder.tableCnt != 0) {
             queryBuilder.getFileColumnNamesMap();
             queryBuilder.reformVeloxExpr();
-            auto planPtr = queryBuilder.getVeloxPlanBuilder();
+            std::vector<core::PlanNodeId> scanIds;
+            auto planPtr = queryBuilder.getVeloxPlanBuilder(scanIds);
             params.planNode = planPtr;
-            auto results = veloxRunQuery(params, cursor);
-            if (!cursor) {
+            params.maxDrivers = 4;
+            const int numSplits = 5;
+            auto results = runNew(params, cursor, scanIds, numSplits);
+//            auto results = run2(params, cursor, scanIds, numSplits);
+//            auto results = veloxRunQuery(params, cursor);
+            if(!cursor) {
                 throw std::runtime_error("Query terminated with error");
             }
-#ifdef DebugInfo
+//#ifdef DebugInfo
             veloxPrintResults(results);
             std::cout << std::endl;
+#ifdef DebugInfo
             auto task = cursor->task();
             const auto stats = task->taskStats();
             std::cout << printPlanWithStats(*planPtr, stats, false) << std::endl;
@@ -640,6 +652,10 @@ static auto &enginePtr(bool initialise = true) {
         functions::prestosql::registerAllScalarFunctions();
         aggregate::prestosql::registerAllAggregateFunctions();
         parse::registerTypeResolver();
+        auto bossConnector = connector::getConnectorFactory(
+                                 boss::engines::velox::BossConnectorFactory::kBossConnectorName)
+                                 ->newConnector(boss::engines::velox::kBossConnectorId, nullptr);
+        connector::registerConnector(bossConnector);
     }
     return engine;
 }

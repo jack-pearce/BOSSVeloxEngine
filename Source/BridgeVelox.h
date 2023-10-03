@@ -5,6 +5,7 @@
 #include <Expression.hpp>
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
+#include "BossConnector.h"
 
 //#define DebugInfo
 using namespace facebook::velox;
@@ -13,6 +14,7 @@ using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 
 namespace boss::engines::velox {
+    const std::string kBossConnectorId = "test-boss";
     using ExpressionSpanArgument = boss::expressions::ExpressionSpanArgument;
 /**
      int = 0, long = 1, double = 2
@@ -49,8 +51,14 @@ namespace boss::engines::velox {
     BufferPtr importFromBossAsOwnerBuffer(BossArray &bossArray);
 
     std::vector<RowVectorPtr> veloxRunQuery(const CursorParameters &params, std::unique_ptr<TaskCursor> &cursor);
+    std::vector<RowVectorPtr> run2(const CursorParameters& params,
+                                   std::unique_ptr<TaskCursor>& cursor,
+                                   std::vector<core::PlanNodeId> scanIds, const int numSplits);
+    std::vector<RowVectorPtr> runNew(const CursorParameters& params,
+                                     std::unique_ptr<TaskCursor>& cursor,
+                                     std::vector<core::PlanNodeId> scanIds, const int numSplits);
 
-    void veloxPrintResults(const std::vector<RowVectorPtr> &results);
+        void veloxPrintResults(const std::vector<RowVectorPtr> &results);
 
     RowVectorPtr makeRowVectorNoCopy(std::vector<std::string> childNames,
                                      std::vector<VectorPtr> children, memory::MemoryPool *pool);
