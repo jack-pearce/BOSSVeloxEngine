@@ -134,10 +134,10 @@ namespace boss::engines::velox {
         return actualResults;
     }
 
-    void ensureTaskCompletion(exec::Task* task) {
-        // ASSERT_TRUE requires a function with return type void.
-        ASSERT_TRUE(waitForTaskCompletion(task));
-    }
+//    void ensureTaskCompletion(exec::Task* task) {
+//        // ASSERT_TRUE requires a function with return type void.
+//        ASSERT_TRUE(waitForTaskCompletion(task));
+//    }
 
     std::vector<RowVectorPtr> myreadCursor(const CursorParameters& params,
                                            std::unique_ptr<TaskCursor>& cursor,

@@ -105,41 +105,21 @@ target_include_directories(BOSSVeloxEngine PUBLIC
         ${VELOX_DIRS}/velox/external/xxhash/
         ${VELOX_DIRS}/third_party/
         ${VELOX_DIRS}/third_party/xsimd/
-        ${VELOX_DIRS}/third_party/xsimd/include/
-        ${BOSSVeloxEngine_BINARY_DIR}/_deps/protobuf-src/src/)
+        ${VELOX_DIRS}/third_party/xsimd/include/)
 
-set(VELOX_BUILD_TESTING ON)
+set(VELOX_BUILD_TESTING OFF)
 set(VELOX_CODEGEN_SUPPORT OFF)
-set(VELOX_ENABLE_HIVE_CONNECTOR ON)
-set(VELOX_ENABLE_TPCH_CONNECTOR ON)
+set(VELOX_ENABLE_HIVE_CONNECTOR OFF)
+set(VELOX_ENABLE_TPCH_CONNECTOR OFF)
 set(VELOX_ENABLE_SPARK_FUNCTIONS OFF)
 
 add_subdirectory(${VELOX_DIRS} velox)
 target_link_libraries(
         BOSSVeloxEngine
-        velox_dwio_common
-        velox_dwio_common_exception
-        velox_dwio_type_fbhive
-        velox_dwio_common_test_utils
-        velox_hive_connector
-        velox_exception
-        velox_memory
-        velox_process
-        velox_serialization
-        velox_encode
-        velox_type
-        velox_caching
-        velox_vector_test_lib
-        velox_tpch_connector
-
         velox_aggregates
-        velox_exec
-        velox_exec_test_lib
         velox_functions_prestosql
         velox_parse_parser
         atomic
-        gtest
-        ${FMT}
 )
 #copy from VLDB submission artifact
 target_compile_options(BOSSVeloxEngine PUBLIC -DARROW_STATIC -msse4.2 -DFOLLY_CFG_NO_COROUTINES -DFOLLY_HAS_COROUTINES=0)
