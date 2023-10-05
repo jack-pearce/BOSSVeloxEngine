@@ -69,7 +69,6 @@ void BossDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
       partSize_ = 1;
       totalParts_ = std::accumulate(bossSpanRowCountVec_.begin(), bossSpanRowCountVec_.end(), 0);
     }
-    //    std::cout << "totalParts_ " << totalParts_ << '\n';
     firstAddSplit_ = true;
   }
 
@@ -114,7 +113,7 @@ RowVectorPtr BossDataSource::getBossData(uint64_t length) {
 std::optional<RowVectorPtr> BossDataSource::next(uint64_t size, ContinueFuture& /*future*/) {
   VELOX_CHECK_NOT_NULL(currentSplit_, "No split to process. Call addSplit() first.");
 
-  auto maxRows = std::min(size, (splitEnd_ - splitOffset_));
+  auto maxRows = splitEnd_ - splitOffset_;
   auto outputVector = getBossData(maxRows);
 
   // If the split is exhausted.
