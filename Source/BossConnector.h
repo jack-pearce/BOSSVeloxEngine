@@ -103,12 +103,10 @@ class BossDataSource : public DataSource {
   }
 
  private:
-  RowVectorPtr getBossData(uint64_t startOffset, size_t maxRows);
-  RowVectorPtr getBossData1D(uint64_t startOffset, size_t maxRows);
+  RowVectorPtr getBossData(uint64_t length);
 
   std::string bossTableName_;
   std::vector<RowVectorPtr> bossRowDataVec_;
-  std::vector<VectorPtr> bossRowData1D_;
   std::vector<size_t> bossSpanRowCountVec_;
   RowTypePtr outputType_;
 
@@ -123,11 +121,9 @@ class BossDataSource : public DataSource {
   uint64_t splitEnd_{0};
   size_t spanCountIdx_{0};
   bool firstAddSplit_{false};
-  size_t totalRowCount;
-  size_t maxTotalParts;
-  size_t partSize;
-  std::vector<size_t> spanRowCountAcc;
-  std::vector<uint64_t> partOffset_;
+  size_t totalParts_{0};
+  size_t subParts_{0};
+  uint64_t partSize_{0};
 
   size_t completedRows_{0};
   size_t completedBytes_{0};
