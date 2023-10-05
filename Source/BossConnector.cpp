@@ -69,14 +69,15 @@ void BossDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
       partSize_ = 1;
       totalParts_ = std::accumulate(bossSpanRowCountVec_.begin(), bossSpanRowCountVec_.end(), 0);
     }
-//    std::cout << "totalParts_ " << totalParts_ << '\n';
+    //    std::cout << "totalParts_ " << totalParts_ << '\n';
     firstAddSplit_ = true;
   }
 
   // invalid split
   if(currentSplit_->partNumber >= totalParts_) {
     spanCountIdx_ = 0;
-    splitEnd_ = splitOffset_;
+    splitOffset_ = 0;
+    splitEnd_ = 0;
     return;
   }
 
@@ -84,6 +85,13 @@ void BossDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   assert(spanCountIdx_ < bossSpanRowCountVec_.size());
   auto subPartIdx = currentSplit_->partNumber % subParts_;
   splitOffset_ = subPartIdx * partSize_;
+  // invalid split
+  if(splitOffset_ >= bossSpanRowCountVec_.at(spanCountIdx_)) {
+    spanCountIdx_ = 0;
+    splitOffset_ = 0;
+    splitEnd_ = 0;
+    return;
+  }
   splitEnd_ = splitOffset_ + partSize_;
   if(splitEnd_ > bossSpanRowCountVec_.at(spanCountIdx_)) {
     splitEnd_ = bossSpanRowCountVec_.at(spanCountIdx_);
