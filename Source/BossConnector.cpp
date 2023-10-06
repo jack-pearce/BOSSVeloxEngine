@@ -68,7 +68,11 @@ void BossDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
     if(subParts_ > bossSpanRowCountVec_.at(0)) {
       partSize_ = 1;
       totalParts_ = std::accumulate(bossSpanRowCountVec_.begin(), bossSpanRowCountVec_.end(), 0);
+      subParts_ = bossSpanRowCountVec_.at(0);
     }
+#ifdef DebugInfo
+    std::cout << "totalParts_ " << totalParts_ << std::endl;
+#endif
     firstAddSplit_ = true;
   }
 
@@ -101,6 +105,8 @@ RowVectorPtr BossDataSource::getBossData(uint64_t length) {
   std::vector<VectorPtr> children;
   children.reserve(outputColumnMappings_.size());
 
+  assert(splitOffset_ <= INT_MAX);
+  assert(length <= INT_MAX);
   for(const auto channel : outputColumnMappings_) {
     children.emplace_back(
         bossRowDataVec_.at(spanCountIdx_)->childAt(channel)->slice(splitOffset_, length));

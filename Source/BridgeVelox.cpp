@@ -123,23 +123,7 @@ namespace boss::engines::velox {
         return wrapInBufferViewAsOwner(buffer, length, arrayReleaser);;
     }
 
-    std::vector<RowVectorPtr> veloxRunQuery(const CursorParameters &params, std::unique_ptr<TaskCursor> &cursor) {
-
-        cursor = std::make_unique<TaskCursor>(params);
-
-        std::vector<RowVectorPtr> actualResults;
-        while (cursor->moveNext()) {
-            actualResults.push_back(cursor->current());
-        }
-        return actualResults;
-    }
-
-//    void ensureTaskCompletion(exec::Task* task) {
-//        // ASSERT_TRUE requires a function with return type void.
-//        ASSERT_TRUE(waitForTaskCompletion(task));
-//    }
-
-    std::vector<RowVectorPtr> myreadCursor(const CursorParameters& params,
+    std::vector<RowVectorPtr> myReadCursor(const CursorParameters& params,
                                            std::unique_ptr<TaskCursor>& cursor,
                                            std::function<void(exec::Task*)> addSplits) {
         cursor = std::make_unique<TaskCursor>(params);
@@ -153,78 +137,25 @@ namespace boss::engines::velox {
             addSplits(task);
         }
 
-//        EXPECT_TRUE(waitForTaskCompletion(task)) << task->taskId();
         return std::move(result);
     }
 
-    std::vector<RowVectorPtr> run2(const CursorParameters& params,
-                                   std::unique_ptr<TaskCursor>& cursor,
-                                   std::vector<core::PlanNodeId> scanIds, const int numSplits) {
-        try {
-            std::unordered_map<core::PlanNodeId, std::vector<exec::Split>> splits_;
-
-            for(auto& scanId : scanIds) {
-              std::vector<exec::Split> splits;
-              splits.reserve(numSplits);
-              for(size_t i = 0; i < numSplits; ++i) {
-                splits.emplace_back(
-                    exec::Split(std::make_shared<BossConnectorSplit>(
-                        kBossConnectorId, numSplits, i)));
-              }
-              splits_[scanId] = std::move(splits);
-              std::cout << "Added " << numSplits << " split(s) to node " << scanId << "." << std::endl;
-            }
-
-            bool noMoreSplits = false;
-            auto addSplits = [&](exec::Task* task) {
-              if(!noMoreSplits) {
-                for(auto& [nodeId, nodeSplits] : splits_) {
-                  for(auto& split : nodeSplits) {
-                    task->addSplit(nodeId, std::move(split));
-                  }
-                  task->noMoreSplits(nodeId);
-                }
-              }
-              noMoreSplits = true;
-            };
-            auto result = myreadCursor(params, cursor, addSplits);
-//            ensureTaskCompletion(cursor->task().get());
-            return result;
-        } catch(const std::exception& e) {
-            LOG(ERROR) << "Query terminated with: " << e.what();
-            return {};
-        }
-    }
-
-    /// Returns the plan node ID of the only leaf plan node. Throws if 'root' has
-    /// multiple leaf nodes.
-    core::PlanNodeId getOnlyLeafPlanNodeId(const core::PlanNodePtr& root) {
-        const auto& sources = root->sources();
-        if(sources.empty()) {
-            return root->id();
-        }
-
-        VELOX_CHECK_EQ(1, sources.size());
-        return getOnlyLeafPlanNodeId(sources[0]);
-    }
-
-    std::vector<RowVectorPtr> runNew(const CursorParameters& params,
-                                     std::unique_ptr<TaskCursor>& cursor,
-                                     std::vector<core::PlanNodeId> scanIds, const int numSplits) {
+    std::vector<RowVectorPtr> veloxRunQueryParallel(const CursorParameters& params,
+                                                    std::unique_ptr<TaskCursor>& cursor,
+                                                    std::vector<core::PlanNodeId> scanIds,
+                                                    const int numSplits) {
         try {
             bool noMoreSplits = false;
             auto addSplits = [&](exec::Task* task) {
               if(!noMoreSplits) {
-                for(const auto& scanId : scanIds) {
-                  //                  auto scanId = getOnlyLeafPlanNodeId(params.planNode);
-                  //                  assert(scanId == planNodeId);
+                for(auto& scanId : scanIds) {
                   std::vector<exec::Split> splits;
                   splits.reserve(numSplits);
                   for(size_t i = 0; i < numSplits; ++i) {
                     splits.emplace_back(exec::Split(
                         std::make_shared<BossConnectorSplit>(kBossConnectorId, numSplits, i)));
                   }
-                  for(const auto& split : splits) {
+                  for(auto& split : splits) {
                     task->addSplit(scanId, exec::Split(split));
                   }
                   task->noMoreSplits(scanId);
@@ -232,8 +163,7 @@ namespace boss::engines::velox {
               }
               noMoreSplits = true;
             };
-            auto result = myreadCursor(params, cursor, addSplits);
-            //            ensureTaskCompletion(cursor->task().get());
+            auto result = myReadCursor(params, cursor, addSplits);
             return result;
         } catch(const std::exception& e) {
             LOG(ERROR) << "Query terminated with: " << e.what();

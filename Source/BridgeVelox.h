@@ -50,15 +50,12 @@ namespace boss::engines::velox {
 
     BufferPtr importFromBossAsOwnerBuffer(BossArray &bossArray);
 
-    std::vector<RowVectorPtr> veloxRunQuery(const CursorParameters &params, std::unique_ptr<TaskCursor> &cursor);
-    std::vector<RowVectorPtr> run2(const CursorParameters& params,
-                                   std::unique_ptr<TaskCursor>& cursor,
-                                   std::vector<core::PlanNodeId> scanIds, const int numSplits);
-    std::vector<RowVectorPtr> runNew(const CursorParameters& params,
-                                     std::unique_ptr<TaskCursor>& cursor,
-                                     std::vector<core::PlanNodeId> scanIds, const int numSplits);
+    std::vector<RowVectorPtr> veloxRunQueryParallel(const CursorParameters& params,
+                                                    std::unique_ptr<TaskCursor>& cursor,
+                                                    std::vector<core::PlanNodeId> scanIds,
+                                                    const int numSplits);
 
-        void veloxPrintResults(const std::vector<RowVectorPtr> &results);
+    void veloxPrintResults(const std::vector<RowVectorPtr> &results);
 
     RowVectorPtr makeRowVectorNoCopy(std::vector<std::string> childNames,
                                      std::vector<VectorPtr> children, memory::MemoryPool *pool);

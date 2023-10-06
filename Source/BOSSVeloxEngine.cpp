@@ -608,18 +608,15 @@ namespace boss::engines::velox {
             std::vector<core::PlanNodeId> scanIds;
             auto planPtr = queryBuilder.getVeloxPlanBuilder(scanIds);
             params.planNode = planPtr;
-            params.maxDrivers = 4;
-            const int numSplits = 5;
-            auto results = runNew(params, cursor, scanIds, numSplits);
-//            auto results = run2(params, cursor, scanIds, numSplits);
-//            auto results = veloxRunQuery(params, cursor);
+            params.maxDrivers = 16;
+            const int numSplits = 64;
+            auto results = veloxRunQueryParallel(params, cursor, scanIds, numSplits);
             if(!cursor) {
                 throw std::runtime_error("Query terminated with error");
             }
-//#ifdef DebugInfo
+#ifdef DebugInfo
             veloxPrintResults(results);
             std::cout << std::endl;
-#ifdef DebugInfo
             auto task = cursor->task();
             const auto stats = task->taskStats();
             std::cout << printPlanWithStats(*planPtr, stats, false) << std::endl;
