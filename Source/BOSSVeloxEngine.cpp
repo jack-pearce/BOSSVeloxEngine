@@ -608,7 +608,7 @@ namespace boss::engines::velox {
             std::vector<core::PlanNodeId> scanIds;
             auto planPtr = queryBuilder.getVeloxPlanBuilder(scanIds);
             params.planNode = planPtr;
-            params.maxDrivers = 16;
+            params.maxDrivers = 20;
             const int numSplits = 64;
             auto results = veloxRunQueryParallel(params, cursor, scanIds, numSplits);
             if(!cursor) {
