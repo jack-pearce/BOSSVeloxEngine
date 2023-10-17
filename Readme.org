@@ -12,6 +12,7 @@ This engine tests successfully on x86_64 Linux (Ubuntu 22.04)
 : git submodule update --init --recursive
 : sudo ./scripts/setup-ubuntu.sh
 : cd ..
+: export VELOX_DIRS=...
 
 *** Build BOSSVeloxEngine
 : git clone https://github.com/symbol-store/BOSSVeloxEngine.git -b parallel_support
