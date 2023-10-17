@@ -27,3 +27,8 @@ This engine tests successfully on x86_64 Linux (Ubuntu 22.04)
 : cd build
 : cmake -DGITHUB_TOKEN=... -DVELOX_DIRS=${VELOX_DIRS} -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_BUILD_TYPE=Release ..
 : cmake --build . -j8
+
+*** SQL Test
+: cp ../Tests/BOSSTests.cpp ./BOSS-prefix/src/BOSS/Tests/
+: cmake --build . -j8
+: ./deps/bin/Tests --library ./libBOSSVeloxEngine.so
