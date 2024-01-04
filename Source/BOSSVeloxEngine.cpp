@@ -27,6 +27,10 @@ using namespace facebook::velox::exec::test;
 #include <tuple>
 #include <vector>
 
+//#define DebugInfo
+#define USE_NEW_TABLE_FORMAT
+//#define SUPPORT_INT32
+
 using std::endl;
 using std::to_string;
 using std::function;
@@ -51,8 +55,13 @@ std::ostream &operator<<(std::ostream &s, std::vector<std::int64_t> const &input
 
 namespace boss {
     using std::vector;
+#ifdef SUPPORT_INT32
     using SpanInputs = std::variant<std::vector<std::int32_t>, vector<std::int64_t>, vector<std::double_t>,
+                                    vector<std::string>, vector<Symbol>>;
+#else
+    using SpanInputs = std::variant<vector<std::int64_t>, vector<std::double_t>,
             vector<std::string>, vector<Symbol>>;
+#endif
 } // namespace boss
 
 namespace boss::engines::velox {
@@ -67,7 +76,7 @@ namespace boss::engines::velox {
     using expressions::generic::ArgumentWrapper;
     using expressions::generic::ExpressionArgumentsWithAdditionalCustomAtomsWrapper;
 
-
+#ifdef SUPPORT_INT32
     int32_t dateToInt32(const std::string &str) {
         std::istringstream iss;
         iss.str(str);
@@ -86,6 +95,26 @@ namespace boss::engines::velox {
         projectionList.pop_back();
         projectionList.push_back(out);
     }
+#else
+    int64_t dateToInt64(const std::string &str) {
+        std::istringstream iss;
+        iss.str(str);
+        struct std::tm tm = {};
+        iss >> std::get_time(&tm, "%Y-%m-%d");
+        auto t = std::mktime(&tm);
+        return (int64_t) std::chrono::duration_cast<std::chrono::days>(
+                   std::chrono::system_clock::from_time_t(t).time_since_epoch())
+            .count();
+    }
+
+    void yearToInt64(std::vector<std::string> &projectionList) {
+        auto out = fmt::format("cast(((cast({} AS DOUBLE) + 719563.285) / 365.265) AS INTEGER)",
+                               projectionList.back());
+        projectionList.pop_back();
+        projectionList.pop_back();
+        projectionList.push_back(out);
+    }
+#endif
 
     Expression dateProcess(Expression &&e) {
         return visit(boss::utilities::overload(
@@ -96,7 +125,11 @@ namespace boss::engines::velox {
                                      std::stringstream out;
                                      out << argument;
                                      auto dateString = out.str().substr(1, 10);
+#ifdef SUPPORT_INT32
                                      return dateToInt32(dateString);
+#else
+                                     return dateToInt64(dateString);
+#endif
                                  }
                                  // at least evaluate all the arguments
                                  auto [_, statics, dynamics, spans] = std::move(e).decompose();
@@ -190,6 +223,7 @@ namespace boss::engines::velox {
             return createDictVector(indices, flatVecPtr);
         };
 
+#ifdef SUPPORT_INT32
         if constexpr (std::is_same_v<T, int32_t>) {
             return createVeloxVector(BossType::bINTEGER);
         } else if constexpr (std::is_same_v<T, int64_t>) {
@@ -197,6 +231,13 @@ namespace boss::engines::velox {
         } else if constexpr (std::is_same_v<T, double_t>) {
             return createVeloxVector(BossType::bDOUBLE);
         }
+#else
+        if constexpr (std::is_same_v<T, int64_t>) {
+            return createVeloxVector(BossType::bBIGINT);
+        } else if constexpr (std::is_same_v<T, double_t>) {
+            return createVeloxVector(BossType::bDOUBLE);
+        }
+#endif
     }
 
     template<typename T>
@@ -207,9 +248,11 @@ namespace boss::engines::velox {
     }
 
     ExpressionSpanArgument veloxtoSpan(VectorPtr &&vec) {
+#ifdef SUPPORT_INT32
         if (vec->typeKind() == TypeKind::INTEGER) {
             return createBossSpan<int32_t>(vec);
         }
+#endif
         if (vec->typeKind() == TypeKind::BIGINT) {
             return createBossSpan<int64_t>(vec);
         }
@@ -305,12 +348,20 @@ namespace boss::engines::velox {
 
                                 if (tmpArhStr.substr(0, 10) == "DateObject") {
                                     auto dateString = tmpArhStr.substr(12, 10);
+#ifdef SUPPORT_INT32
                                     queryBuilder.add_tmpFieldFilter(to_string(dateToInt32(dateString)), cValue);
+#else
+                                    queryBuilder.add_tmpFieldFilter(to_string(dateToInt64(dateString)), cValue);
+#endif
                                     continue;
                                 }
                                 if (tmpArhStr.substr(0, 4) == "Date") {
                                     auto dateString = tmpArhStr.substr(6, 10);
+#ifdef SUPPORT_INT32
                                     queryBuilder.add_tmpFieldFilter(to_string(dateToInt32(dateString)), cValue);
+#else
+                                    queryBuilder.add_tmpFieldFilter(to_string(dateToInt64(dateString)), cValue);
+#endif
                                     continue;
                                 }
 
@@ -366,7 +417,11 @@ namespace boss::engines::velox {
                                 bossExprToVeloxProj_PartialAggr(std::move(argument), projectionList, queryBuilder);
 
                                 if (headName == "Year") {
+#ifdef SUPPORT_INT32
                                     yearToInt32(projectionList);
+#else
+                                    yearToInt64(projectionList);
+#endif
                                 }
                             }
                             if (projectionList.size() >= 3) {
@@ -415,7 +470,8 @@ namespace boss::engines::velox {
                 std::move(expression));
     }
 
-// "Table"_("Column"_("Id"_, "List"_(1, 2, 3), "Column"_("Value"_ "List"_(0.1, 10.0, 5.2)))
+// Old format: "Table"_("Column"_("Id"_, "List"_(1, 2, 3), "Column"_("Value"_ "List"_(0.1, 10.0, 5.2)))
+// New format: "Table"_("Id"_("List"_(1, 2, 3)), "Value"_("List"_(0.1, 10.0, 5.2))))
     std::unordered_map<std::string, TypePtr> getColumns(
             ComplexExpression &&expression, std::vector<BufferPtr> indicesVec,
             std::vector<RowVectorPtr> &rowDataVec, RowTypePtr &tableSchema, std::vector<size_t> &spanRowCountVec, memory::MemoryPool *pool) {
@@ -431,8 +487,15 @@ namespace boss::engines::velox {
                         auto &&columnExpr) {
                     auto column = get < ComplexExpression > (std::forward<decltype(columnExpr)>(columnExpr));
                     auto [head, unused_, dynamics, spans] = std::move(column).decompose();
-                    auto columnName = get < Symbol > (std::move(dynamics.at(0)));
-                    auto dynamic = get < ComplexExpression > (std::move(dynamics.at(1)));
+
+#ifdef USE_NEW_TABLE_FORMAT
+                    auto columnName = head;
+                    auto dynamic = get<ComplexExpression>(std::move(dynamics.at(0)));
+#else
+                    auto columnName = get<Symbol>(std::move(dynamics.at(0)));
+                    auto dynamic = get<ComplexExpression>(std::move(dynamics.at(1)));
+#endif
+
                     auto list = transformDynamicsToSpans(std::move(dynamic));
                     auto [listHead, listUnused_, listDynamics, listSpans] = std::move(list).decompose();
                     if (listSpans.empty()) {
@@ -448,8 +511,13 @@ namespace boss::engines::velox {
                         }
                         VectorPtr subColData = std::visit(
                                 [pool, indices]<typename T>(boss::Span<T> &&typedSpan) -> VectorPtr {
+#ifdef SUPPORT_INT32
                                     if constexpr (std::is_same_v<T, int32_t> || std::is_same_v<T, int64_t> ||
-                                                  std::is_same_v<T, double_t>) {
+                                        std::is_same_v<T, double_t>) {
+#else
+                                    if constexpr (std::is_same_v<T, int64_t> ||
+                                        std::is_same_v<T, double_t>) {
+#endif
                                         return spanToVelox<T>(std::move(typedSpan), pool, indices);
                                     } else {
                                         throw std::runtime_error("unsupported column type in Select");
@@ -490,7 +558,11 @@ namespace boss::engines::velox {
         for (auto &subSpan: listSpans) {
             BufferPtr indexData = std::visit(
                     []<typename T>(boss::Span<T> &&typedSpan) -> BufferPtr {
+#ifdef SUPPORT_INT32
                         if constexpr (std::is_same_v<T, int32_t>) {
+#else
+                        if constexpr (std::is_same_v<T, int64_t>) {
+#endif
                             BossArray bossIndices(typedSpan.size(), typedSpan.begin(), std::move(typedSpan));
                             return importFromBossAsOwnerBuffer(bossIndices);
                         } else {
@@ -521,7 +593,11 @@ namespace boss::engines::velox {
     void bossExprToVelox(Expression &&expression, QueryBuilder &queryBuilder) {
         std::visit(
                 boss::utilities::overload(
+#ifdef SUPPORT_INT32
                         [&](std::int32_t a) {
+#else
+                        [&](std::int64_t a) {
+#endif
                             queryBuilder.curVeloxExpr.limit = a;
                         },
                         [&](ComplexExpression &&expression) {
