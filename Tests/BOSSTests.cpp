@@ -9,7 +9,6 @@
 
 #define USE_NEW_TABLE_FORMAT
 #define VERBOSE_OUTPUT
-//#define USE_INT32
 
 using boss::Expression;
 using std::string;
@@ -28,16 +27,11 @@ namespace boss {
 using boss::expressions::atoms::Span;
 };
 
-#ifdef USE_INT32
 using std::int32_t;
-#else
-using std::int64_t;
-#endif
 
 static std::vector<string>
     librariesToTest{}; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
-#ifdef USE_INT32
 auto createSpansInt = [](auto... values) {
   using SpanArguments = boss::expressions::ExpressionSpanArguments;
   std::vector<int32_t> v1 = {values...};
@@ -46,16 +40,6 @@ auto createSpansInt = [](auto... values) {
   args.emplace_back(std::move(s1));
   return boss::expressions::ComplexExpression("List"_, {}, {}, std::move(args));
 };
-#else
-auto createSpansInt = [](auto... values) {
-  using SpanArguments = boss::expressions::ExpressionSpanArguments;
-  std::vector<int64_t> v1 = {values...};
-  auto s1 = boss::Span<int64_t>(std::move(v1));
-  SpanArguments args;
-  args.emplace_back(std::move(s1));
-  return boss::expressions::ComplexExpression("List"_, {}, {}, std::move(args));
-};
-#endif
 
 auto createSpansFloat = [](auto... values) {
   using SpanArguments = boss::expressions::ExpressionSpanArguments;
@@ -159,6 +143,44 @@ TEST_CASE("SELECT", "[basics]") { // NOLINT
         "Where"_("Greater"_(2, "key"_))));
 
     CHECK(result == "List"_("List"_(1, 4))); // NOLINT
+  }
+}
+
+TEST_CASE("Gather", "[basics]") { // NOLINT
+  auto engine = boss::engines::BootstrapEngine();
+  REQUIRE(!librariesToTest.empty());
+  auto eval = [&engine](boss::Expression&& expression) mutable {
+    return engine.evaluate("EvaluateInEngines"_("List"_(GENERATE(from_range(librariesToTest))),
+                                                std::move(expression)));
+  };
+
+#ifdef USE_NEW_TABLE_FORMAT
+  auto table1 = "Table"_(
+      "key"_(createSpansInt(1, 2, 3, 4)),
+      "payload"_(createSpansInt(5, 6, 7, 8)));
+#else
+  auto table1 = "Table"_(
+      "Column"_("key"_, createSpansInt(1, 2, 3, 4)),
+      "Column"_("payload"_, createSpansInt(5, 6, 7, 8)));
+#endif
+
+  SECTION("Simple_gather") {
+    std::vector<int32_t> indexes = {0,2,3};
+    boss::expressions::ExpressionSpanArguments args;
+    args.emplace_back(boss::Span<int32_t>(std::move(std::vector(indexes))));
+    auto projectExpression = boss::expressions::ComplexExpression("Project"_(std::move(table1),
+                                                                             "As"_("key"_, "key"_,
+                                                                                   "payload"_, "payload"_)));
+    boss::expressions::ExpressionArguments subExpressions;
+    subExpressions.emplace_back(std::move(projectExpression));
+    auto gatherExpression =
+        boss::expressions::ComplexExpression("Gather"_, {}, std::move(subExpressions), std::move(args));
+
+    std::cout << "Expression: " << gatherExpression << std::endl;
+
+    auto const& result = eval(std::move(gatherExpression));
+
+    CHECK(result == "List"_("List"_(1, 3, 4, 5, 7, 8))); // NOLINT
   }
 }
 
