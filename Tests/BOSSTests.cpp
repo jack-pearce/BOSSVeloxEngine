@@ -27,15 +27,15 @@ namespace boss {
 using boss::expressions::atoms::Span;
 };
 
-using std::int32_t;
+using intType = std::int32_t;
 
 static std::vector<string>
     librariesToTest{}; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 auto createSpansInt = [](auto... values) {
   using SpanArguments = boss::expressions::ExpressionSpanArguments;
-  std::vector<int32_t> v1 = {values...};
-  auto s1 = boss::Span<int32_t>(std::move(v1));
+  std::vector<intType> v1 = {values...};
+  auto s1 = boss::Span<intType>(std::move(v1));
   SpanArguments args;
   args.emplace_back(std::move(s1));
   return boss::expressions::ComplexExpression("List"_, {}, {}, std::move(args));
@@ -175,8 +175,6 @@ TEST_CASE("Gather", "[basics]") { // NOLINT
     subExpressions.emplace_back(std::move(projectExpression));
     auto gatherExpression =
         boss::expressions::ComplexExpression("Gather"_, {}, std::move(subExpressions), std::move(args));
-
-    std::cout << "Expression: " << gatherExpression << std::endl;
 
     auto const& result = eval(std::move(gatherExpression));
 

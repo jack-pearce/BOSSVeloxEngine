@@ -475,6 +475,7 @@ namespace boss::engines::velox {
                     colDataListVec.push_back(std::move(colDataVec));
                 });
 
+        // TODO this doesn't seem to handle dictionary encoded strings from int32 support branch of Arrow
         auto listSize = colDataListVec[0].size();
         for (auto i = 0; i < listSize; i++) {
             spanRowCountVec.push_back(colDataListVec[0][i]->size());
@@ -618,7 +619,7 @@ namespace boss::engines::velox {
             std::vector<core::PlanNodeId> scanIds;
             auto planPtr = queryBuilder.getVeloxPlanBuilder(scanIds);
             params.planNode = planPtr;
-            params.maxDrivers = 20; // Max number of threads
+            params.maxDrivers = 1; // Max number of threads
             const int numSplits = 64;
             auto results = veloxRunQueryParallel(params, cursor, scanIds, numSplits);
             if(!cursor) {
