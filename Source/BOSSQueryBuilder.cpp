@@ -209,19 +209,16 @@ namespace boss::engines::velox {
         }
     }
 
-    std::shared_ptr<memory::MemoryPool> QueryBuilder::pool_ = memory::getDefaultMemoryPool();
-
     core::PlanNodePtr QueryBuilder::getVeloxPlanBuilder(std::vector<core::PlanNodeId> &scanIds) {
         const long MAX_JOIN_WAY = 0xff;
         auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
-        std::vector<core::PlanNodePtr> tableMapPlan;
+        std::vector<PlanBuilder> tableMapPlan;
         std::unordered_map<std::string, long> joinMapPlan;
         std::vector<std::string> outputLayout;
 
         for (auto itExpr = veloxExprList.begin(); itExpr != veloxExprList.end(); ++itExpr) {
             auto &veloxExpr = *itExpr;
             const auto &fileColumnNames = veloxExpr.fileColumnNamesMap;
-            core::PlanNodeId scanId;
 
             auto assignColumns = [](std::vector<std::string> names) {
               std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
@@ -233,38 +230,61 @@ namespace boss::engines::velox {
               return assignmentsMap;
             };
 
-            auto assignmentsMap = assignColumns(veloxExpr.tableSchema->names());
-            auto plan = PlanBuilder(planNodeIdGenerator)
-                        .tableScan(veloxExpr.tableSchema,
-                                   std::make_shared<BossTableHandle>(
-                                       kBossConnectorId, veloxExpr.tableName, veloxExpr.tableSchema,
-                                       veloxExpr.rowDataVec, veloxExpr.spanRowCountVec),
-                                   assignmentsMap)
-                        .capturePlanNodeId(scanId);
-
-            scanIds.emplace_back(scanId);
-
             // nothing happened for a table, projection for all columns
-            if (veloxExpr.selectedColumns.empty()) {
-                assert(veloxExpr.projectionsVec.empty());
-                std::for_each(fileColumnNames.begin(),
-                              fileColumnNames.end(),
-                              [&veloxExpr](auto &&p) {
-                                  veloxExpr.selectedColumns.push_back(p.first);
-                              });
-                veloxExpr.projectionsVec = veloxExpr.selectedColumns;
+            if(veloxExpr.selectedColumns.empty()) {
+              assert(veloxExpr.projectionsVec.empty());
+              std::for_each(fileColumnNames.begin(), fileColumnNames.end(), [&veloxExpr](auto&& p) {
+                veloxExpr.selectedColumns.push_back(p.first);
+              });
+              veloxExpr.projectionsVec = veloxExpr.selectedColumns;
             }
-            //project involved columns only
-            plan.project(veloxExpr.selectedColumns);
 
-            if (!veloxExpr.fieldFiltersVec.empty()) {
+            auto assignmentsMap = assignColumns(veloxExpr.tableSchema->names());
+            auto createScanProjectFilterPlan = [&assignmentsMap, &veloxExpr, &scanIds,
+                                                &planNodeIdGenerator](int offset = 0,
+                                                                      int partitionSize = -1) {
+              core::PlanNodeId scanId;
+              auto plan = PlanBuilder(planNodeIdGenerator)
+                              .startTableScan()
+                              .outputType(veloxExpr.tableSchema)
+                              .tableHandle(std::make_shared<BossTableHandle>(
+                                  kBossConnectorId, veloxExpr.tableName, veloxExpr.tableSchema,
+                                  veloxExpr.rowDataVec, veloxExpr.spanRowCountVec))
+                              .assignments(assignmentsMap)
+                              .endTableScan()
+                              .capturePlanNodeId(scanId);
+              //std::cout << "add scanId: " << scanId << std::endl;
+              scanIds.emplace_back(scanId);
+              // limit
+              if(partitionSize >= 0) {
+                plan.limit(offset, partitionSize, true);
+              }
+              // project involved columns only
+              plan.project(veloxExpr.selectedColumns);
+              // filter
+              if(!veloxExpr.fieldFiltersVec.empty()) {
                 auto filtersCnt = 0;
-                while (filtersCnt < veloxExpr.fieldFiltersVec.size()) {
-                    plan.filter(veloxExpr.fieldFiltersVec[filtersCnt++]);
+                while(filtersCnt < veloxExpr.fieldFiltersVec.size()) {
+                  plan.filter(veloxExpr.fieldFiltersVec[filtersCnt++]);
                 }
-            }
+              }
+              return plan;
+            };
 
-            auto join_find_key1 = [this, &veloxExpr, &joinMapPlan, &MAX_JOIN_WAY, &outputLayout, &tableMapPlan, &itExpr, &plan](
+            std::optional<PlanBuilder> plan;
+
+            auto addHashJoinToPlan = [&plan, &outputLayout, &planNodeIdGenerator, &veloxExpr,
+                                      &createScanProjectFilterPlan](auto& hashKeys0,
+                                                                    auto& hashKeys1,
+                                                                    auto& build) {
+              if(!plan) {
+                plan = createScanProjectFilterPlan();
+              }
+              plan->hashJoin(hashKeys0, hashKeys1, build.planNode(), "", outputLayout);
+            };
+
+            auto join_find_key1 = [this, &veloxExpr, &joinMapPlan, &MAX_JOIN_WAY, &outputLayout,
+                                   &tableMapPlan, &itExpr, &plan, &addHashJoinToPlan](
                     auto key1, const std::vector<std::string> &hashKeys0, const std::vector<std::string> &hashKeys1) {
                 int tableIdx = 0;
                 for (int j = 0; j < columnAliaseList.size(); j++) {
@@ -281,28 +301,25 @@ namespace boss::engines::velox {
                 }
                 tableName = veloxExprList[tableIdx].tableName;
                 it = joinMapPlan.find(tableName);
-                core::PlanNodePtr build;
+                int64_t buildPlanIdx = 0;
                 if (it == joinMapPlan.end()) {  // first time
                     joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
-                    build = tableMapPlan[tableIdx];
+                    buildPlanIdx = tableIdx;
                     outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableIdx].outColumns);
                 } else {
                     if (it->second == MAX_JOIN_WAY) {
-                        build = tableMapPlan[tableIdx];
+                        buildPlanIdx = tableIdx;
                     } else {
-                        build = tableMapPlan[it->second];
+                        buildPlanIdx = it->second;
                     }
                     joinMapPlan[tableName] = itExpr - veloxExprList.begin();
                 }
-                plan.hashJoin(
-                        hashKeys0,
-                        hashKeys1,
-                        build,
-                        "",
-                        outputLayout);
+                addHashJoinToPlan(hashKeys0, hashKeys1, tableMapPlan[buildPlanIdx]);
             };
 
-            auto join_find_key2 = [this, &veloxExpr, &joinMapPlan, &MAX_JOIN_WAY, &outputLayout, &tableMapPlan, &itExpr, &plan](
+            auto join_find_key2 =
+                [this, &veloxExpr, &joinMapPlan, &MAX_JOIN_WAY, &outputLayout, &tableMapPlan,
+                 &itExpr, &plan, &addHashJoinToPlan](
                     auto leftKey, auto rightKey, const std::vector<std::string> &hashKeys0,
                     const std::vector<std::string> &hashKeys1) {
                 int tableLeft = 0; // find left key table
@@ -327,25 +344,20 @@ namespace boss::engines::velox {
                 }
                 tableName = veloxExprList[tableLeft].tableName;
                 it = joinMapPlan.find(tableName);
-                core::PlanNodePtr build;
+                int64_t buildPlanIdx = 0;
                 if (it == joinMapPlan.end()) {  // first time
                     joinMapPlan.emplace(tableName, MAX_JOIN_WAY);
-                    build = tableMapPlan[tableLeft];
+                  buildPlanIdx = tableLeft;
                     outputLayout = mergeColumnNames(outputLayout, veloxExprList[tableLeft].selectedColumns);
                 } else {
                     if (it->second == MAX_JOIN_WAY) {
-                        build = tableMapPlan[tableLeft];
+                    buildPlanIdx = tableLeft;
                     } else {
-                        build = tableMapPlan[it->second];
+                      buildPlanIdx = it->second;
                     }
                     joinMapPlan[tableName] = itExpr - veloxExprList.begin();
                 }
-                plan.hashJoin(
-                        hashKeys0,
-                        hashKeys1,
-                        build,
-                        "",
-                        outputLayout);
+                addHashJoinToPlan(hashKeys0, hashKeys1, tableMapPlan[buildPlanIdx]);
             };
 
             auto join_handle = [&]() {
@@ -403,47 +415,54 @@ namespace boss::engines::velox {
                 }
             }
 
-            if (!veloxExpr.projectionsVec.empty()) {
+            auto finalizePlan = [&veloxExpr, &itExpr, this](auto& plan) {
+              if(!veloxExpr.projectionsVec.empty()) {
                 plan.project(veloxExpr.projectionsVec);
-            }
-            if (!veloxExpr.groupingKeysVec.empty() || !veloxExpr.aggregatesVec.empty()) {
+              }
+              if(!veloxExpr.groupingKeysVec.empty() || !veloxExpr.aggregatesVec.empty()) {
                 std::vector<std::string> aggregatesVec;
                 veloxExpr.selectedColumns = veloxExpr.groupingKeysVec;
-                for (auto itAggr = veloxExpr.aggregatesVec.begin(); itAggr != veloxExpr.aggregatesVec.end(); ++itAggr) {
-                    auto aggregation = *itAggr;
-                    auto tmp = fmt::format("{}({}) as {}", aggregation.op, aggregation.oldName, aggregation.newName);
-                    aggregatesVec.emplace_back(tmp);
-                    veloxExpr.selectedColumns.emplace_back(aggregation.newName);
+                for(auto itAggr = veloxExpr.aggregatesVec.begin();
+                    itAggr != veloxExpr.aggregatesVec.end(); ++itAggr) {
+                  auto aggregation = *itAggr;
+                  auto tmp = fmt::format("{}({}) as {}", aggregation.op, aggregation.oldName,
+                                         aggregation.newName);
+                  aggregatesVec.emplace_back(tmp);
+                  veloxExpr.selectedColumns.emplace_back(aggregation.newName);
                 }
                 plan.partialAggregation(veloxExpr.groupingKeysVec, aggregatesVec);
-            }
-            if ((itExpr == veloxExprList.end() - 1) &&
-                (!veloxExpr.groupingKeysVec.empty() || !veloxExpr.aggregatesVec.empty())) {
+              }
+              if((itExpr == veloxExprList.end() - 1) &&
+                 (!veloxExpr.groupingKeysVec.empty() || !veloxExpr.aggregatesVec.empty())) {
                 plan.localPartition({});
                 plan.finalAggregation();
-            }
-            if (!veloxExpr.filter.empty()) {
+              }
+              if(!veloxExpr.filter.empty()) {
                 plan.filter(veloxExpr.filter);
-            }
-            if (!veloxExpr.orderByVec.empty()) {
-                if (veloxExpr.limit > 0) {
-                    plan.topN(veloxExpr.orderByVec, veloxExpr.limit, false);
+              }
+              if(!veloxExpr.orderByVec.empty()) {
+                if(veloxExpr.limit > 0) {
+                  plan.topN(veloxExpr.orderByVec, veloxExpr.limit, false);
                 } else {
-                    plan.orderBy(veloxExpr.orderByVec, false);
+                  plan.orderBy(veloxExpr.orderByVec, false);
                 }
-            } else if (veloxExpr.limit > 0) {
+              } else if(veloxExpr.limit > 0) {
                 plan.limit(0, veloxExpr.limit, false);
-            }
-            auto planPtr = plan.planNode();
+              }
+            };
 
-            outputLayout = planPtr->outputType()->names();
+            if(!plan) {
+              plan = createScanProjectFilterPlan();
+            }
+            finalizePlan(*plan);
+            tableMapPlan.push_back(std::move(*plan));
+            outputLayout = tableMapPlan.back().planNode()->outputType()->names();
             veloxExpr.outColumns = outputLayout;
-            tableMapPlan.push_back(std::move(planPtr));
         }
 #ifdef DebugInfo
         std::cout << "VeloxPlanBuilder Finished." << std::endl;
 #endif
-        return tableMapPlan.back();
+        return tableMapPlan.back().planNode();
     }
 
 } // namespace boss::engines::velox

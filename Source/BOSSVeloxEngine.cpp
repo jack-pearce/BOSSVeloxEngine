@@ -179,7 +179,7 @@ namespace boss::engines::velox {
         BossArray bossArray(span.size(), span.begin(), std::move(span));
 
         auto createDictVector = [](BufferPtr &indices, auto flatVecPtr) {
-            auto indicesSize = indices->size() / 4;
+            auto indicesSize = indices->size() / sizeof(int32_t);
             return BaseVector::wrapInDictionary(
                     BufferPtr(nullptr), indices, indicesSize, std::move(flatVecPtr));
         };
@@ -253,7 +253,12 @@ namespace boss::engines::velox {
         } else if (input[0] == "Minus" || input[0] == "Subtract") {
             out = fmt::format("({}) - ({})", input[1], input[2]);
         } else {
-            throw std::runtime_error("unexpected Projection type");
+            std::stringstream output;
+            output << "unexpected Projection type:";
+            for(auto const& arg : input) {
+              output << " " << arg;
+            }
+            throw std::runtime_error(output.str());
         }
         projectionList.push_back(out);
     }
@@ -420,7 +425,7 @@ namespace boss::engines::velox {
 // Old format: "Table"_("Column"_("Id"_, "List"_(1, 2, 3), "Column"_("Value"_ "List"_(0.1, 10.0, 5.2)))
 // New format: "Table"_("Id"_("List"_(1, 2, 3)), "Value"_("List"_(0.1, 10.0, 5.2))))
     std::unordered_map<std::string, TypePtr> getColumns(
-            ComplexExpression &&expression, std::vector<BufferPtr> indicesVec,
+            ComplexExpression &&expression, std::vector<BufferPtr> const& indicesVec,
             std::vector<RowVectorPtr> &rowDataVec, RowTypePtr &tableSchema, std::vector<size_t> &spanRowCountVec, memory::MemoryPool *pool) {
         ExpressionArguments columns = std::move(expression).getArguments();
         std::vector<std::string> colNameVec;
@@ -457,12 +462,14 @@ namespace boss::engines::velox {
                             indices = indicesVec[numSpan++];
                         }
                         VectorPtr subColData = std::visit(
-                                [pool, indices]<typename T>(boss::Span<T> &&typedSpan) -> VectorPtr {
+                                [pool, indices, columnName]<typename T>(boss::Span<T> &&typedSpan) -> VectorPtr {
                                     if constexpr (std::is_same_v<T, int32_t> || std::is_same_v<T, int64_t> ||
                                         std::is_same_v<T, double_t>) {
                                         return spanToVelox<T>(std::move(typedSpan), pool, indices);
                                     } else {
-                                        throw std::runtime_error("unsupported column type in Select");
+                                        throw std::runtime_error(
+                                            "unsupported column type in Select: " + columnName
+                                            + " with type: "+ std::string(typeid(T).name()));
                                     }
                                 },
                                 std::move(subSpan));
@@ -524,8 +531,7 @@ namespace boss::engines::velox {
                                                      curVeloxExpr.indicesVec,
                                                      curVeloxExpr.rowDataVec,
                                                      curVeloxExpr.tableSchema,
-                                                     curVeloxExpr.spanRowCountVec,
-                                                     pool_.get());
+                                                     curVeloxExpr.spanRowCountVec, &pool_);
     }
 
     // translate main
@@ -611,7 +617,9 @@ namespace boss::engines::velox {
     }
 
     boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
-        QueryBuilder queryBuilder;
+        ExpressionSpanArguments newSpans;
+
+        QueryBuilder queryBuilder(*pool_.get());
         bossExprToVelox(std::move(e), queryBuilder);
         if(queryBuilder.tableCnt != 0) {
             queryBuilder.getFileColumnNamesMap();
@@ -632,20 +640,19 @@ namespace boss::engines::velox {
             const auto stats = task->taskStats();
             std::cout << printPlanWithStats(*planPtr, stats, false) << std::endl;
 #endif
-            ExpressionSpanArguments newSpans;
-            if (!results.empty()) {
-                for (int i = 0; i < results[0]->childrenSize(); ++i) {
-                    for (auto &result: results) {
-                        newSpans.emplace_back(veloxtoSpan(std::move(result->childAt(i))));
-                    }
+            if(!results.empty()) {
+              for(int i = 0; i < results[0]->childrenSize(); ++i) {
+                for(auto& result : results) {
+                  auto& vec = result->childAt(i);
+                  newSpans.emplace_back(veloxtoSpan(vec));
                 }
+              }
             }
-
-            auto bossResults = boss::expressions::ExpressionArguments();
-            bossResults.push_back(ComplexExpression("List"_, {}, {}, std::move(newSpans)));
-            return ComplexExpression("List"_, std::move(bossResults));
         }
-        return std::move(e);
+
+      auto bossResults = boss::expressions::ExpressionArguments();
+      bossResults.push_back(ComplexExpression("List"_, {}, {}, std::move(newSpans)));
+      return ComplexExpression("List"_, std::move(bossResults));
     }
 
 } // namespace boss::engines::velox
@@ -653,6 +660,7 @@ namespace boss::engines::velox {
 static auto &enginePtr(bool initialise = true) {
     static auto engine = std::unique_ptr<boss::engines::velox::Engine>();
     if (!engine && initialise) {
+        FLAGS_velox_exception_user_stacktrace_enabled = true;
         engine.reset(new boss::engines::velox::Engine());
         engine->executor_ = std::make_shared<folly::CPUThreadPoolExecutor>(
                 std::thread::hardware_concurrency());

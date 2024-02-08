@@ -118,7 +118,7 @@ namespace boss::engines::velox {
 
         // Wrap the values buffer into a Velox BufferView - zero-copy.
         const auto *buffer = bossArray.buffers;
-        auto length = bossArray.length * 4;
+        auto length = bossArray.length * sizeof(int32_t); // assuming always int32 type!
         std::shared_ptr<BossArray> const arrayReleaser(new BossArray(std::move(bossArray)));
         return wrapInBufferViewAsOwner(buffer, length, arrayReleaser);;
     }
@@ -149,14 +149,9 @@ namespace boss::engines::velox {
             auto addSplits = [&](exec::Task* task) {
               if(!noMoreSplits) {
                 for(auto& scanId : scanIds) {
-                  std::vector<exec::Split> splits;
-                  splits.reserve(numSplits);
                   for(size_t i = 0; i < numSplits; ++i) {
-                    splits.emplace_back(exec::Split(
+                    task->addSplit(scanId, exec::Split(
                         std::make_shared<BossConnectorSplit>(kBossConnectorId, numSplits, i)));
-                  }
-                  for(auto& split : splits) {
-                    task->addSplit(scanId, exec::Split(split));
                   }
                   task->noMoreSplits(scanId);
                 }

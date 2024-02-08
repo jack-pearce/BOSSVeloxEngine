@@ -97,7 +97,7 @@ namespace boss::engines::velox {
 
     class QueryBuilder {
     public:
-        QueryBuilder() : tableCnt(0) {}
+        QueryBuilder(memory::MemoryPool& pool) : tableCnt(0), pool_(pool) {}
 
         int tableCnt;
         FormExpr curVeloxExpr;
@@ -105,7 +105,7 @@ namespace boss::engines::velox {
         std::unordered_map<std::string, std::string> projNameMap;
         std::unordered_map<std::string, std::string> aggrNameMap;
         std::vector<std::unordered_map<std::string, TypePtr>> columnAliaseList;
-        static std::shared_ptr<memory::MemoryPool> pool_;
+        memory::MemoryPool& pool_;
         FiledFilter tmpFieldFilter;
         JoinPairList tmpJoinPairList;
 

@@ -24,7 +24,10 @@ namespace boss::engines::velox {
 
         Engine &operator=(Engine &&) = delete;
 
-        Engine() = default;
+        Engine() {
+          memory::MemoryManager::initialize({});
+          pool_ = memory::MemoryManager::getInstance()->addLeafPool();
+        }
 
         ~Engine() = default;
 
@@ -37,7 +40,7 @@ namespace boss::engines::velox {
         std::unique_ptr<TaskCursor> cursor;
 
     private:
-
+        std::shared_ptr<memory::MemoryPool> pool_;
     };
 
 } // namespace boss::engines::velox
