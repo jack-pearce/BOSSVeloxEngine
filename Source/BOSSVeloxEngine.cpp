@@ -626,7 +626,7 @@ namespace boss::engines::velox {
     }
 
     boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
-        ExpressionSpanArguments newSpans;
+        boss::expressions::ExpressionArguments columns;
 
         QueryBuilder queryBuilder(*pool_.get());
         bossExprToVelox(std::move(e), queryBuilder);
@@ -655,20 +655,28 @@ namespace boss::engines::velox {
                 // make sure that lazy vectors are computed
                 result->loadedVector();
               }
+              auto const& rowType = dynamic_cast<const RowType*>(results[0]->type().get());
               for(int i = 0; i < results[0]->childrenSize(); ++i) {
+                ExpressionSpanArguments spans;
                 for(auto& result : results) {
                   auto& vec = result->childAt(i);
                   BaseVector::flattenVector(vec); // flatten dictionaries
                                                   // (TODO: can this be done in parallel?)
-                  newSpans.emplace_back(veloxtoSpan(vec));
+                  spans.emplace_back(veloxtoSpan(vec));
                 }
+                auto const& name = rowType->nameOf(i);
+#ifdef USE_NEW_TABLE_FORMAT
+                columns.emplace_back(ComplexExpression(Symbol(name), {}, {}, std::move(spans)));
+#else
+                boss::expressions::ExpressionArguments args;
+                args.emplace_back(Symbol(name));
+                args.emplace_back(ComplexExpression("List"_, {}, {}, std::move(spans)));
+                columns.emplace_back(ComplexExpression("Column"_, std::move(args)));
+#endif // USE_NEW_TABLE_FORMAT
               }
             }
         }
-
-      auto bossResults = boss::expressions::ExpressionArguments();
-      bossResults.push_back(ComplexExpression("List"_, {}, {}, std::move(newSpans)));
-      return ComplexExpression("List"_, std::move(bossResults));
+      return ComplexExpression("Table"_, std::move(columns));
     }
 
 } // namespace boss::engines::velox
