@@ -202,13 +202,14 @@ namespace boss::engines::velox {
     }
 
     template<typename T>
-    boss::Span<const T> createBossSpan(VectorPtr &vec) {
+    boss::Span<const T> createBossSpan(VectorPtr const& vec) {
         auto const *data = vec->values()->as<T>();
         auto length = vec->size();
-        return boss::Span<const T>(data, length, [v = std::move(vec)]() {});
+        VectorPtr ptrCopy = vec;
+        return boss::Span<const T>(data, length, [v = std::move(ptrCopy)]() {});
     }
 
-    ExpressionSpanArgument veloxtoSpan(VectorPtr &&vec) {
+    ExpressionSpanArgument veloxtoSpan(VectorPtr const& vec) {
         if (vec->typeKind() == TypeKind::INTEGER) {
             return createBossSpan<int32_t>(vec);
         }
@@ -629,6 +630,7 @@ namespace boss::engines::velox {
             params.planNode = planPtr;
             params.maxDrivers = 1; // Max number of threads
             const int numSplits = 64;
+            params.copyResult = false;
             auto results = veloxRunQueryParallel(params, cursor, scanIds, numSplits);
             if(!cursor) {
                 throw std::runtime_error("Query terminated with error");
@@ -641,9 +643,15 @@ namespace boss::engines::velox {
             std::cout << printPlanWithStats(*planPtr, stats, false) << std::endl;
 #endif
             if(!results.empty()) {
+              for(auto& result : results) {
+                // make sure that lazy vectors are computed
+                result->loadedVector();
+              }
               for(int i = 0; i < results[0]->childrenSize(); ++i) {
                 for(auto& result : results) {
                   auto& vec = result->childAt(i);
+                  BaseVector::flattenVector(vec); // flatten dictionaries
+                                                  // (TODO: can this be done in parallel?)
                   newSpans.emplace_back(veloxtoSpan(vec));
                 }
               }
