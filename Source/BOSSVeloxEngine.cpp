@@ -275,8 +275,10 @@ namespace boss::engines::velox {
                             queryBuilder.add_tmpFieldFilter(a, cValue);
                         },
                         [&](Symbol const &a) {
-                            queryBuilder.add_selectedColumns(a.getName());
-                            queryBuilder.add_tmpFieldFilter(a.getName(), cName);
+                            auto name = a.getName();
+                            std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+                            queryBuilder.add_selectedColumns(name);
+                            queryBuilder.add_tmpFieldFilter(name, cName);
                         },
                         [&](std::string const &a) {
                             queryBuilder.add_tmpFieldFilter("'" + a + "'", cValue);
@@ -341,8 +343,10 @@ namespace boss::engines::velox {
                             projectionList.emplace_back(a);
                         },
                         [&](Symbol const &a) {
-                            queryBuilder.add_selectedColumns(a.getName());
-                            projectionList.push_back(a.getName());
+                            auto name = a.getName();
+                            std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+                            queryBuilder.add_selectedColumns(name);
+                            projectionList.push_back(name);
                         },
                         [&](std::string const &a) {
                             projectionList.push_back(a);
@@ -389,21 +393,23 @@ namespace boss::engines::velox {
         std::visit(
                 boss::utilities::overload(
                         [&](Symbol const &a) {
+                            auto name = a.getName();
+                            std::transform(name.begin(), name.end(), name.begin(), ::tolower);
                             if (queryBuilder.curVeloxExpr.orderBy) {
-                                if (strcasecmp(a.getName().c_str(), "desc") == 0) {
+                                if (strcasecmp(name.c_str(), "desc") == 0) {
                                     auto it = queryBuilder.curVeloxExpr.orderByVec.end() - 1;
                                     *it = *it + " DESC";
                                 } else {
-                                    auto it = queryBuilder.aggrNameMap.find(a.getName());
+                                    auto it = queryBuilder.aggrNameMap.find(name);
                                     if (it != queryBuilder.aggrNameMap.end()) {
                                         queryBuilder.curVeloxExpr.orderByVec.push_back(it->second);
                                     } else {
-                                        queryBuilder.curVeloxExpr.orderByVec.push_back(a.getName());
+                                        queryBuilder.curVeloxExpr.orderByVec.push_back(name);
                                     }
                                 }
                             } else {
-                                queryBuilder.add_selectedColumns(a.getName());
-                                queryBuilder.curVeloxExpr.groupingKeysVec.push_back(a.getName());
+                                queryBuilder.add_selectedColumns(name);
+                                queryBuilder.curVeloxExpr.groupingKeysVec.push_back(name);
                             }
                         },
                         [&](ComplexExpression &&expression) {
@@ -442,12 +448,14 @@ namespace boss::engines::velox {
                     auto [head, unused_, dynamics, spans] = std::move(column).decompose();
 
 #ifdef USE_NEW_TABLE_FORMAT
-                    auto columnName = head;
+                    auto columnName = head.getName();
                     auto dynamic = get<ComplexExpression>(std::move(dynamics.at(0)));
 #else
-                    auto columnName = get<Symbol>(std::move(dynamics.at(0)));
+                    auto columnName = get<Symbol>(std::move(dynamics.at(0))).getName();
                     auto dynamic = get<ComplexExpression>(std::move(dynamics.at(1)));
 #endif
+                    std::transform(columnName.begin(), columnName.end(), columnName.begin(),
+                                   ::tolower);
 
                     auto list = transformDynamicsToSpans(std::move(dynamic));
                     auto [listHead, listUnused_, listDynamics, listSpans] = std::move(list).decompose();
@@ -477,9 +485,9 @@ namespace boss::engines::velox {
                         colDataVec.push_back(std::move(subColData));
                     }
                     auto columnType = colDataVec[0]->type();
-                    colNameVec.emplace_back(columnName.getName());
+                    colNameVec.emplace_back(columnName);
                     colTypeVec.emplace_back(columnType);
-                    fileColumnNamesMap.insert(std::make_pair(columnName.getName(), columnType));
+                    fileColumnNamesMap.insert(std::make_pair(columnName, columnType));
                     colDataListVec.push_back(std::move(colDataVec));
                 });
 
