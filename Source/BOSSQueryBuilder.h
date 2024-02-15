@@ -2,6 +2,10 @@
 
 #include "BridgeVelox.h"
 
+#define SUPPORT_RADIX_JOINS
+#define SUPPORT_UNION_OPERATOR
+#define SUPPORT_NEW_NUM_SPLITS
+
 namespace boss::engines::velox {
 
     enum ColumnType {
@@ -70,6 +74,7 @@ namespace boss::engines::velox {
         RowTypePtr tableSchema;
         std::unordered_map<std::string, TypePtr> fileColumnNamesMap;
         std::vector<BufferPtr> indicesVec;
+        std::vector<int64_t> radixPartitions;
         std::vector<size_t> spanRowCountVec;
 
         void clear() {
@@ -91,6 +96,7 @@ namespace boss::engines::velox {
             filter.clear();
             rowDataVec.clear();
             indicesVec.clear();
+            radixPartitions.clear();
             spanRowCountVec.clear();
         }
     };

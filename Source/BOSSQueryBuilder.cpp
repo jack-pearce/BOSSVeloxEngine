@@ -212,7 +212,11 @@ namespace boss::engines::velox {
     core::PlanNodePtr QueryBuilder::getVeloxPlanBuilder(std::vector<core::PlanNodeId> &scanIds) {
         const long MAX_JOIN_WAY = 0xff;
         auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
+#ifdef SUPPORT_RADIX_JOINS
+        std::vector<std::vector<PlanBuilder>> tableMapPlan;
+#else
         std::vector<PlanBuilder> tableMapPlan;
+#endif // SUPPORT_RADIX_JOINS
         std::unordered_map<std::string, long> joinMapPlan;
         std::vector<std::string> outputLayout;
 
@@ -276,11 +280,41 @@ namespace boss::engines::velox {
             auto addHashJoinToPlan = [&plan, &outputLayout, &planNodeIdGenerator, &veloxExpr,
                                       &createScanProjectFilterPlan](auto& hashKeys0,
                                                                     auto& hashKeys1,
+#ifdef SUPPORT_RADIX_JOINS
+                                                                    auto& builds) {
+              auto buildIt = builds.begin();
+              if(veloxExpr.radixPartitions.empty()) {
+                // classic hash join
+                if(!plan) {
+                  plan = createScanProjectFilterPlan();
+                }
+                plan->hashJoin(hashKeys0, hashKeys1, buildIt->planNode(), "", outputLayout);
+              } else {
+                // radix hash join
+                int64_t offset = 0;
+                std::vector<core::PlanNodePtr> partialJoinNodes;
+                for(auto& partitionSize : veloxExpr.radixPartitions) {
+                  auto partialJoin = createScanProjectFilterPlan(offset, partitionSize);
+                  auto radixKeys0 = hashKeys0;
+                  // std::transform(radixKeys0.begin(), radixKeys0.end(), radixKeys0.begin(),
+                  //                [](auto& str) { return "radix_" + str; });
+                  auto radixKeys1 = hashKeys1;
+                  // std::transform(radixKeys1.begin(), radixKeys1.end(), radixKeys1.begin(),
+                  //                [](auto& str) { return "radix_" + str; });
+                  partialJoin.hashJoin(radixKeys0, radixKeys1, (buildIt++)->planNode(), "",
+                                       outputLayout);
+                  partialJoinNodes.emplace_back(partialJoin.planNode());
+                  offset += partitionSize;
+                }
+                plan = PlanBuilder(planNodeIdGenerator).localPartition({}, partialJoinNodes);
+              }
+#else
                                                                     auto& build) {
               if(!plan) {
                 plan = createScanProjectFilterPlan();
               }
               plan->hashJoin(hashKeys0, hashKeys1, build.planNode(), "", outputLayout);
+#endif // SUPPORT_RADIX_JOINS
             };
 
             auto join_find_key1 = [this, &veloxExpr, &joinMapPlan, &MAX_JOIN_WAY, &outputLayout,
@@ -451,18 +485,46 @@ namespace boss::engines::velox {
               }
             };
 
+#ifdef SUPPORT_RADIX_JOINS
+            if(!plan) {
+              if(veloxExpr.radixPartitions.empty()) {
+                plan = createScanProjectFilterPlan();
+                finalizePlan(*plan);
+                tableMapPlan.push_back({std::move(*plan)});
+              } else {
+                tableMapPlan.push_back({});
+                auto& partialPlans = tableMapPlan.back();
+                int64_t offset = 0;
+                for(auto& partitionSize : veloxExpr.radixPartitions) {
+                  auto partialPlan = createScanProjectFilterPlan(offset, partitionSize);
+                  finalizePlan(partialPlan);
+                  partialPlans.push_back(std::move(partialPlan));
+                  offset += partitionSize;
+                }
+              }
+            } else {
+              finalizePlan(*plan);
+              tableMapPlan.push_back({std::move(*plan)});
+            }
+            outputLayout = tableMapPlan.back()[0].planNode()->outputType()->names();
+#else
             if(!plan) {
               plan = createScanProjectFilterPlan();
             }
             finalizePlan(*plan);
             tableMapPlan.push_back(std::move(*plan));
             outputLayout = tableMapPlan.back().planNode()->outputType()->names();
+#endif // SUPPORT_RADIX_JOINS
             veloxExpr.outColumns = outputLayout;
         }
 #ifdef DebugInfo
         std::cout << "VeloxPlanBuilder Finished." << std::endl;
 #endif
+#ifdef SUPPORT_RADIX_JOINS
+        return tableMapPlan.back()[0].planNode();
+#else
         return tableMapPlan.back().planNode();
+#endif // SUPPORT_RADIX_JOINS
     }
 
 } // namespace boss::engines::velox

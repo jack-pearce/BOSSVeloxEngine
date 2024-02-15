@@ -55,6 +55,14 @@ void BossDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   VELOX_CHECK(currentSplit_, "Wrong type of split for BossDataSource.");
 
   if(!firstAddSplit_) {
+#ifdef SUPPORT_NEW_NUM_SPLITS
+    if(currentSplit_->totalParts < bossSpanRowCountVec_.size()) {
+      totalParts_ = bossSpanRowCountVec_.size();
+    } else {
+      totalParts_ = currentSplit_->totalParts;
+      totalParts_ -= totalParts_ % bossSpanRowCountVec_.size();
+    }
+#else
     totalParts_ = bossSpanRowCountVec_.size();
     while(1) {
       if(totalParts_ * 2 > currentSplit_->totalParts) {
@@ -62,6 +70,7 @@ void BossDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
       }
       totalParts_ *= 2;
     }
+#endif // SUPPORT_NEW_NUM_SPLITS
 
     subParts_ = totalParts_ / bossSpanRowCountVec_.size();
     partSize_ = std::ceil((double)bossSpanRowCountVec_.at(0) / (double)subParts_);
@@ -71,7 +80,10 @@ void BossDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
       subParts_ = bossSpanRowCountVec_.at(0);
     }
 #ifdef DebugInfo
+    std::cout << "bossSpanRowCountVec_.size() " << bossSpanRowCountVec_.size() << std::endl;
     std::cout << "totalParts_ " << totalParts_ << std::endl;
+    std::cout << "subParts_ " << subParts_ << std::endl;
+    std::cout << "partSize_ " << partSize_ << std::endl;
 #endif
     firstAddSplit_ = true;
   }
@@ -104,6 +116,9 @@ void BossDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
 RowVectorPtr BossDataSource::getBossData(uint64_t length) {
   std::vector<VectorPtr> children;
   children.reserve(outputColumnMappings_.size());
+
+  //std::cout << "getBossData: spanCountIdx_=" << spanCountIdx_ << " splitOffset_=" << splitOffset_
+  //          << " length=" << length << std::endl;
 
   assert(splitOffset_ <= INT_MAX);
   assert(length <= INT_MAX);

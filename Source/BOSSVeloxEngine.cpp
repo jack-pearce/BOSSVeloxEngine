@@ -28,7 +28,7 @@ using namespace facebook::velox::exec::test;
 #include <vector>
 
 //#define DebugInfo
-#define USE_NEW_TABLE_FORMAT
+//#define USE_NEW_TABLE_FORMAT
 
 using std::endl;
 using std::to_string;
@@ -530,6 +530,14 @@ namespace boss::engines::velox {
         return indicesVec;
     }
 
+#ifdef SUPPORT_RADIX_JOINS
+    std::vector<BufferPtr> getRadixPartition(Expression&& expression) {
+      auto e = transformDynamicsToSpans(std::get<ComplexExpression>(std::move(expression)));
+      auto [head, statics, dynamics, spans] = std::move(e).decompose();
+      return getIndices(std::move(spans));
+    }
+#endif // SUPPORT_RADIX_JOINS
+
     void QueryBuilder::getTableMeta(ComplexExpression &&expression) {
         if (!curVeloxExpr.tableName.empty()) {
             veloxExprList.push_back(curVeloxExpr);
@@ -541,6 +549,14 @@ namespace boss::engines::velox {
                                                      curVeloxExpr.rowDataVec,
                                                      curVeloxExpr.tableSchema,
                                                      curVeloxExpr.spanRowCountVec, &pool_);
+        //std::cout << curVeloxExpr.tableName << ":" << std::endl;
+        /*auto inputSize =
+            std::accumulate(curVeloxExpr.rowDataVec.begin(), curVeloxExpr.rowDataVec.end(), 0,
+                                         [](size_t total, auto const& vec) {
+              std::cout << "  span size: " << vec->size() << std::endl;
+              return total + vec->size();
+            });
+        std::cout << " input size: " << inputSize << std::endl;*/
     }
 
     // translate main
@@ -577,6 +593,33 @@ namespace boss::engines::velox {
                                 bossExprToVelox(std::move(*it_start), queryBuilder);
                                 return;
                             }
+
+#ifdef SUPPORT_RADIX_JOINS
+                            if(headName == "RadixPartitions") {
+                              auto it = std::move_iterator(dynamics.begin());
+                              auto it_end = std::move_iterator(dynamics.end());
+                              bossExprToVelox(std::move(*it++), queryBuilder);
+                              for(; it != it_end; ++it) {
+                                auto indices = getRadixPartition(std::move(*it));
+                                queryBuilder.curVeloxExpr.radixPartitions.emplace_back(
+                                  std::accumulate(indices.begin(), indices.end(), 0,
+                                        [](size_t total, auto const& indicesBufferPtr) {
+                                        //std::cout << "buffer size: "
+                                        //        << indicesBufferPtr->size()
+                                        //        << std::endl;
+                                        return total + indicesBufferPtr->size() / sizeof(int32_t);
+                                      }));
+                                //std::cout << "radixPartitions push "
+                                //          << queryBuilder.curVeloxExpr.radixPartitions.back()
+                                //          << std::endl;
+                                queryBuilder.curVeloxExpr.indicesVec.insert(
+                                    queryBuilder.curVeloxExpr.indicesVec.end(),
+                                    std::move_iterator(indices.begin()),
+                                    std::move_iterator(indices.end()));
+                              }
+                              return;
+                            }
+#endif // SUPPORT_RADIX_JOINS
 
                             int count = 0;
                             for (auto &argument: dynamics) {
@@ -625,9 +668,99 @@ namespace boss::engines::velox {
         return std::move(e);
     }
 
+#ifdef SUPPORT_NEW_NUM_SPLITS
+    static int numSplits = 64;
+#endif // SUPPORT_NEW_NUM_SPLITS
+
     boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
+#ifdef SUPPORT_NEW_NUM_SPLITS
+      if(e.getHead().getName() == "Set") {
+        if(std::get<Symbol>(e.getDynamicArguments()[0]) == "NumSplits"_) {
+          numSplits = std::get<int32_t>(e.getDynamicArguments()[1]);
+          //std::cout << "set NumSplits = " << numSplits << std::endl;
+        }
+        return true;
+      }
+#endif // SUPPORT_NEW_NUM_SPLITS
+
         boss::expressions::ExpressionArguments columns;
 
+#ifdef SUPPORT_UNION_OPERATOR
+        auto evalAndAddOutputSpans = [&, this](auto&& e) {
+          QueryBuilder queryBuilder(*pool_.get());
+          bossExprToVelox(std::move(e), queryBuilder);
+          if(queryBuilder.tableCnt != 0) {
+            queryBuilder.getFileColumnNamesMap();
+            queryBuilder.reformVeloxExpr();
+            std::vector<core::PlanNodeId> scanIds;
+            auto planPtr = queryBuilder.getVeloxPlanBuilder(scanIds);
+            params_->planNode = planPtr;
+            params_->maxDrivers = 1; // Max number of threads
+#ifndef SUPPORT_NEW_NUM_SPLITS
+            const int numSplits = 64;
+#endif
+            params_->copyResult = false;
+            auto results = veloxRunQueryParallel(*params_, cursor_, scanIds, numSplits);
+            if(!cursor_) {
+              throw std::runtime_error("Query terminated with error");
+            }
+#ifdef DebugInfo
+            veloxPrintResults(results);
+            std::cout << std::endl;
+            auto& task = cursor_->task();
+            auto const& stats = task->taskStats();
+            std::cout << printPlanWithStats(*planPtr, stats, false) << std::endl;
+#endif
+            if(!results.empty()) {
+              for(auto& result : results) {
+                // make sure that lazy vectors are computed
+                result->loadedVector();
+                /*if(result->containsLazyNotLoaded())*/ {
+                  // auto copy = BaseVector::create<RowVector>(result->type(), result->size(),
+                  // pool_); copy->copy(result.get(), 0, 0, result->size()); result =
+                  // std::move(copy);
+                }
+              }
+              // std::cout << "output spans num: " << results.size() << std::endl;
+              // std::cout << "column num: " << results[0]->childrenSize() << std::endl;
+              /*auto outputSize = std::accumulate(
+                  results.begin(), results.end(), 0, [](size_t total, auto const& vec) {
+                    std::cout << "  span size: " << vec->size() << std::endl;
+                    return total + vec->size();
+                  });
+              std::cout << "output size: " << outputSize << std::endl;*/
+              auto const& rowType = dynamic_cast<const RowType*>(results[0]->type().get());
+              for(int i = 0; i < results[0]->childrenSize(); ++i) {
+                ExpressionSpanArguments spans;
+                for(auto& result : results) {
+                  auto& vec = result->childAt(i);
+                  BaseVector::flattenVector(vec); // flatten dictionaries
+                                                  // (TODO: can this be done in parallel?)
+                  spans.emplace_back(veloxtoSpan(vec));
+                }
+                auto const& name = rowType->nameOf(i);
+#ifdef USE_NEW_TABLE_FORMAT
+                columns.emplace_back(ComplexExpression(Symbol(name), {}, {}, std::move(spans)));
+#else
+                boss::expressions::ExpressionArguments args;
+                args.emplace_back(Symbol(name));
+                args.emplace_back(ComplexExpression("List"_, {}, {}, std::move(spans)));
+                columns.emplace_back(ComplexExpression("Column"_, std::move(args)));
+#endif // USE_NEW_TABLE_FORMAT
+              }
+            }
+          }
+        };
+
+        if(e.getHead().getName() == "Union") {
+          auto [_, statics, dynamics, spans] = std::move(e).decompose();
+          for(auto&& arg : dynamics) {
+            evalAndAddOutputSpans(std::move(arg));
+          }
+        } else {
+          evalAndAddOutputSpans(std::move(e));
+        }
+#else
         QueryBuilder queryBuilder(*pool_.get());
         bossExprToVelox(std::move(e), queryBuilder);
         if(queryBuilder.tableCnt != 0) {
@@ -637,7 +770,9 @@ namespace boss::engines::velox {
             auto planPtr = queryBuilder.getVeloxPlanBuilder(scanIds);
             params_->planNode = planPtr;
             params_->maxDrivers = 1; // Max number of threads
+#ifndef SUPPORT_NEW_NUM_SPLITS
             const int numSplits = 64;
+#endif
             params_->copyResult = false;
             auto results = veloxRunQueryParallel(*params_, cursor_, scanIds, numSplits);
             if(!cursor_) {
@@ -676,6 +811,7 @@ namespace boss::engines::velox {
               }
             }
         }
+#endif // SUPPORT_UNION_OPERATOR
       return ComplexExpression("Table"_, std::move(columns));
     }
 
