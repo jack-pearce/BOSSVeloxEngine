@@ -126,7 +126,7 @@ namespace boss::engines::velox {
     std::vector<RowVectorPtr> myReadCursor(const CursorParameters& params,
                                            std::unique_ptr<TaskCursor>& cursor,
                                            std::function<void(exec::Task*)> addSplits) {
-        cursor = std::make_unique<TaskCursor>(params);
+        cursor = TaskCursor::create(params);
         // 'result' borrows memory from cursor so the life cycle must be shorter.
         std::vector<RowVectorPtr> result;
         auto* task = cursor->task().get();
