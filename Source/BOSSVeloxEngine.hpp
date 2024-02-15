@@ -24,23 +24,18 @@ namespace boss::engines::velox {
 
         Engine &operator=(Engine &&) = delete;
 
-        Engine() {
-          memory::MemoryManager::initialize({});
-          pool_ = memory::MemoryManager::getInstance()->addLeafPool();
-        }
+        Engine();
 
-        ~Engine() = default;
+        ~Engine();
 
         boss::Expression evaluate(boss::Expression &&e);
-
         boss::Expression evaluate(boss::ComplexExpression &&e);
 
-        std::shared_ptr<folly::Executor> executor_; // execute Velox physical plan, e.g. projection
-        CursorParameters params;
-        std::unique_ptr<TaskCursor> cursor;
-
     private:
+        std::shared_ptr<folly::Executor> executor_; // execute Velox physical plan, e.g. projection
         std::shared_ptr<memory::MemoryPool> pool_;
+        std::unique_ptr<CursorParameters> params_;
+        std::unique_ptr<TaskCursor> cursor_;
     };
 
 } // namespace boss::engines::velox

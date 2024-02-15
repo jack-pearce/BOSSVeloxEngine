@@ -635,19 +635,19 @@ namespace boss::engines::velox {
             queryBuilder.reformVeloxExpr();
             std::vector<core::PlanNodeId> scanIds;
             auto planPtr = queryBuilder.getVeloxPlanBuilder(scanIds);
-            params.planNode = planPtr;
-            params.maxDrivers = 1; // Max number of threads
+            params_->planNode = planPtr;
+            params_->maxDrivers = 1; // Max number of threads
             const int numSplits = 64;
-            params.copyResult = false;
-            auto results = veloxRunQueryParallel(params, cursor, scanIds, numSplits);
-            if(!cursor) {
+            params_->copyResult = false;
+            auto results = veloxRunQueryParallel(*params_, cursor_, scanIds, numSplits);
+            if(!cursor_) {
                 throw std::runtime_error("Query terminated with error");
             }
 #ifdef DebugInfo
             veloxPrintResults(results);
             std::cout << std::endl;
-            auto task = cursor->task();
-            const auto stats = task->taskStats();
+            auto& task = cursor->task();
+            auto const& stats = task->taskStats();
             std::cout << printPlanWithStats(*planPtr, stats, false) << std::endl;
 #endif
             if(!results.empty()) {
@@ -679,23 +679,35 @@ namespace boss::engines::velox {
       return ComplexExpression("Table"_, std::move(columns));
     }
 
+    Engine::Engine() {
+      static bool firstInitialization = true;
+      if(firstInitialization) {
+        firstInitialization = false;
+        // this init is required only when the engine is first loaded (not every engine reset):
+        memory::MemoryManager::initialize({});
+        functions::prestosql::registerAllScalarFunctions();
+        aggregate::prestosql::registerAllAggregateFunctions();
+        parse::registerTypeResolver();
+        FLAGS_velox_exception_user_stacktrace_enabled = true;
+      }
+      auto bossConnector =
+          connector::getConnectorFactory(boss::engines::velox::BossConnectorFactory::kBossConnectorName)
+              ->newConnector(boss::engines::velox::kBossConnectorId, nullptr);
+      connector::registerConnector(bossConnector);
+      pool_ = memory::MemoryManager::getInstance()->addLeafPool();
+      executor_ = std::make_shared<folly::CPUThreadPoolExecutor>(std::thread::hardware_concurrency());
+      params_ = std::make_unique<CursorParameters>();
+      params_->queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
+    }
+
+    Engine::~Engine() { connector::unregisterConnector(boss::engines::velox::kBossConnectorId); }
+
 } // namespace boss::engines::velox
 
 static auto &enginePtr(bool initialise = true) {
     static auto engine = std::unique_ptr<boss::engines::velox::Engine>();
     if (!engine && initialise) {
-        FLAGS_velox_exception_user_stacktrace_enabled = true;
         engine.reset(new boss::engines::velox::Engine());
-        engine->executor_ = std::make_shared<folly::CPUThreadPoolExecutor>(
-                std::thread::hardware_concurrency());
-        engine->params.queryCtx = std::make_shared<core::QueryCtx>(engine->executor_.get());
-        functions::prestosql::registerAllScalarFunctions();
-        aggregate::prestosql::registerAllAggregateFunctions();
-        parse::registerTypeResolver();
-        auto bossConnector = connector::getConnectorFactory(
-                                 boss::engines::velox::BossConnectorFactory::kBossConnectorName)
-                                 ->newConnector(boss::engines::velox::kBossConnectorId, nullptr);
-        connector::registerConnector(bossConnector);
     }
     return engine;
 }
