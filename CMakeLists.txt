@@ -182,7 +182,6 @@ find_package(Threads REQUIRED)
 set(BenchmarkFiles Benchmarks/VeloxBenchmarks.cpp)
 
 add_executable(VeloxBenchmarks ${BenchmarkFiles})
-target_compile_options(VeloxBenchmarks PUBLIC -msse4.2 -DFOLLY_CFG_NO_COROUTINES -DFOLLY_HAS_COROUTINES=0)
 target_link_libraries(VeloxBenchmarks Threads::Threads)
 if(WIN32)
     target_link_libraries(VeloxBenchmarks shlwapi.lib)  
@@ -207,26 +206,6 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(VeloxBenchmarks rt)
     target_link_libraries(VeloxBenchmarks dl)
 endif()
-
-target_include_directories(VeloxBenchmarks PUBLIC
-        ${VELOX_DIRS}
-        ${VELOX_DIRS}/velox/
-        ${VELOX_DIRS}/velox/external/xxhash/
-        ${VELOX_DIRS}/third_party/
-        ${VELOX_DIRS}/third_party/xsimd/
-        ${VELOX_DIRS}/third_party/xsimd/include/
-        ${BOSSVeloxEngine_BINARY_DIR}/../_deps/protobuf-src/src/)
-
-target_link_libraries(VeloxBenchmarks
-  velox_tpch_connector
-  velox_hive_connector
-  velox_dwio_dwrf_proto
-  velox_type
-  velox_vector
-  velox_exec
-  velox_exec_test_lib
-  velox_memory
-)
 
 ################################ Installation ################################
 
