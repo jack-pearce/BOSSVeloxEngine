@@ -36,6 +36,9 @@ namespace boss::engines::velox {
         std::shared_ptr<memory::MemoryPool> pool_;
         std::unique_ptr<CursorParameters> params_;
         std::unique_ptr<TaskCursor> cursor_;
+
+        int32_t maxThreads = 1;
+        int32_t numSplits = 64;
     };
 
 } // namespace boss::engines::velox

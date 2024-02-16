@@ -668,20 +668,16 @@ namespace boss::engines::velox {
         return std::move(e);
     }
 
-#ifdef SUPPORT_NEW_NUM_SPLITS
-    static int numSplits = 64;
-#endif // SUPPORT_NEW_NUM_SPLITS
-
     boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
-#ifdef SUPPORT_NEW_NUM_SPLITS
       if(e.getHead().getName() == "Set") {
+        if(std::get<Symbol>(e.getDynamicArguments()[0]) == "maxThreads"_) {
+          maxThreads = std::get<int32_t>(e.getDynamicArguments()[1]);
+        }
         if(std::get<Symbol>(e.getDynamicArguments()[0]) == "NumSplits"_) {
           numSplits = std::get<int32_t>(e.getDynamicArguments()[1]);
-          //std::cout << "set NumSplits = " << numSplits << std::endl;
         }
         return true;
       }
-#endif // SUPPORT_NEW_NUM_SPLITS
 
         boss::expressions::ExpressionArguments columns;
 
@@ -695,10 +691,7 @@ namespace boss::engines::velox {
             std::vector<core::PlanNodeId> scanIds;
             auto planPtr = queryBuilder.getVeloxPlanBuilder(scanIds);
             params_->planNode = planPtr;
-            params_->maxDrivers = 1; // Max number of threads
-#ifndef SUPPORT_NEW_NUM_SPLITS
-            const int numSplits = 64;
-#endif
+            params_->maxDrivers = maxThreads;
             params_->copyResult = false;
             auto results = veloxRunQueryParallel(*params_, cursor_, scanIds, numSplits);
             if(!cursor_) {
