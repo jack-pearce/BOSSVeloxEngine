@@ -5,22 +5,8 @@
 
 #include <cmath>
 #include <iostream>
+#include <random>
 #include <thread>
-
-#include <folly/init/Init.h>
-
-#include "velox/common/memory/Memory.h"
-#include "velox/connectors/tpch/TpchConnector.h"
-#include "velox/connectors/tpch/TpchConnectorSplit.h"
-#include "velox/dwio/dwrf/reader/DwrfReader.h"
-#include "velox/exec/Task.h"
-#include "velox/exec/tests/utils/Cursor.h"
-#include "velox/exec/tests/utils/PlanBuilder.h"
-#include "velox/exec/tests/utils/TempDirectoryPath.h"
-#include "velox/type/Type.h"
-#include "velox/vector/BaseVector.h"
-
-using namespace facebook::velox;
 
 using boss::utilities::operator""_; // NOLINT(misc-unused-using-decls) clang-tidy bug
 
@@ -55,118 +41,12 @@ static boss::Expression injectDebugInfoToSpans(boss::Expression&& expr) {
 }
 }; // namespace utilities
 
-static unsigned int MAX_DRIVERS = 1;
-static unsigned int NUM_ROWS_PER_SPLIT = 100000;
-
-static const std::string kTpchConnectorId{"test-tpch"};
-
 static auto const vtune = VTuneAPIInterface{"VeloxBOSS"};
 
 static auto& librariesToTest() {
   static std::vector<std::string> libraries;
   return libraries;
 };
-
-void addSplits(exec::Task& task, core::PlanNodeId scanId, size_t numSplits, size_t startSplit,
-               size_t endSplit) {
-  for(size_t i = startSplit; i < endSplit && i < numSplits; ++i) {
-    task.addSplit(scanId, exec::Split(std::make_shared<connector::tpch::TpchConnectorSplit>(
-                              kTpchConnectorId, numSplits, i)));
-  }
-  task.noMoreSplits(scanId);
-}
-
-void RunScanLimit(benchmark::State& state, float scaleFactor, unsigned int numPartitions,
-                  bool groupedExecution) {
-  auto table = tpch::fromTableName("lineitem");
-  auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
-
-  auto rowCount = tpch::getRowCount(table, scaleFactor);
-  auto partitionSize = rowCount / numPartitions;
-  auto numSplits = rowCount / NUM_ROWS_PER_SPLIT;
-
-  std::vector<std::tuple<core::PlanNodeId, size_t, size_t>> scanIdsAndOffsets;
-  std::vector<core::PlanNodePtr> partialPlanNodes;
-  size_t offset = 0;
-  for(int i = 0; i < numPartitions; ++i) {
-    // std::cout << "offset: " << offset;
-    auto startSplit = std::floor(offset / (float)NUM_ROWS_PER_SPLIT);
-    auto startRow = offset - startSplit * NUM_ROWS_PER_SPLIT;
-    offset += partitionSize;
-    auto endSplit = std::floor(offset / (float)NUM_ROWS_PER_SPLIT);
-    // std::cout << " startRow: " << startRow;
-    // std::cout << " startSplit: " << startSplit << " endSplit: " << endSplit << std::endl;
-    core::PlanNodeId scanId;
-    auto partialPlan =
-        exec::test::PlanBuilder(planNodeIdGenerator)
-            //.tableScan(table, folly::copy(getTableSchema(table)->names()), scaleFactor) // TO FIX!
-            .capturePlanNodeId(scanId)
-            .limit(offset /*startRow*/, partitionSize, true);
-    partialPlanNodes.emplace_back(partialPlan.planNode());
-    scanIdsAndOffsets.emplace_back(std::move(scanId), std::move(startSplit), std::move(endSplit));
-  }
-  auto plan = exec::test::PlanBuilder(planNodeIdGenerator).localPartition({}, partialPlanNodes);
-  auto planFragment = plan.planFragment();
-
-  exec::test::CursorParameters params;
-  params.planNode = plan.planNode();
-  params.maxDrivers = MAX_DRIVERS;
-
-  if(groupedExecution) {
-    planFragment.executionStrategy = core::ExecutionStrategy::kGrouped;
-    for(auto const& [scanId, startSplit, endSplit] : scanIdsAndOffsets) {
-      planFragment.groupedExecutionLeafNodeIds.emplace(scanId);
-    }
-  }
-
-  auto init = [&]() {
-    /*auto taskCursor = exec::test::TaskCursor::Create(params);
-    taskCursor.start();
-    auto task = taskCursor.task();
-    for(auto const& [scanId, startSplit, endSplit] : scanIdsAndOffsets) {
-      // addSplits(*task, scanId, numSplits, startSplit, endSplit);
-      addSplits(*task, scanId, numSplits, 0, numSplits);
-    }
-    return taskCursor;*/
-    return false;
-  };
-
-  auto run = [&](auto& taskCursor) {
-    /*size_t outputRows = 0;
-    while(taskCursor.moveNext()) {
-      auto const& vectorPtr = taskCursor.current();
-      outputRows += vectorPtr->size();
-    }
-    return outputRows;*/
-    return false;
-  };
-
-  // warming-up (and initialising cache)
-  {
-    auto taskCursor = init();
-    auto outputRows = run(taskCursor);
-    benchmark::DoNotOptimize(outputRows);
-  }
-
-  vtune.startSampling("ScanLimit");
-  for(auto _ : state) { // NOLINT
-    state.PauseTiming();
-    // init
-    // std::cout << "*** INIT ***" << std::endl;
-    auto taskCursor = init();
-    state.ResumeTiming();
-    // execution
-    // std::cout << "*** EXEC ***" << std::endl;
-    auto outputRows = run(taskCursor);
-    benchmark::DoNotOptimize(outputRows);
-    /*if(outputRows != rowCount) {
-      std::cout << "error: outputRows(" << outputRows << ") != rowCount(" << rowCount << ")"
-                << std::endl;
-    }*/
-    // std::cout << "*** END ***" << std::endl;
-  }
-  vtune.stopSampling();
-}
 
 void runRadixJoin(benchmark::State& state, size_t buildsize, size_t probesize, size_t numPartitions,
                   bool useDictionary, bool useUnion, bool multithreaded) {
@@ -191,9 +71,12 @@ void runRadixJoin(benchmark::State& state, size_t buildsize, size_t probesize, s
     return true;
   };
 
-  eval("Set"_("NumDrivers"_, (int32_t)0));
+  eval("Set"_("MaxDrivers"_, (int32_t)1));
+
   eval("Set"_("NumSplits"_, (int32_t)(1000 / numPartitions)));
-  eval("Set"_("BatchSize"_, (int32_t)1024));
+
+  eval("Set"_("BatchSize"_, (int32_t)1024)); // ideally should set this instead of numSplits
+                                             // not implemented yet
 
   auto custDatasize = probesize;
   auto orderDatasize = buildsize;
@@ -209,9 +92,9 @@ void runRadixJoin(benchmark::State& state, size_t buildsize, size_t probesize, s
   auto oCustKeyVec = std::vector<int64_t>(orderDatasize);
   std::iota(oCustKeyVec.begin(), oCustKeyVec.end(), 1);
   auto oShipPriorityVec = std::vector<int32_t>(orderDatasize);
-  
-  std::random_device rd;
-  std::mt19937 g(rd());
+
+  std::random_device dev;
+  std::mt19937 rengine(dev());
 
   bool failed = false;
   for(auto _ : state) { // NOLINT
@@ -224,9 +107,9 @@ void runRadixJoin(benchmark::State& state, size_t buildsize, size_t probesize, s
     joins.reserve(numPartitions);
     for(int custOffset = 0, orderOffset = 0, i = 0; i < numPartitions; ++i) {
       std::shuffle(custkeyVec.begin() + custOffset,
-                   custkeyVec.end() + custOffset + custPartitionSize, g);
+                   custkeyVec.end() + custOffset + custPartitionSize, rengine);
       std::shuffle(oCustKeyVec.begin() + orderOffset,
-                   oCustKeyVec.end() + orderOffset + orderPartitionSize, g);
+                   oCustKeyVec.end() + orderOffset + orderPartitionSize, rengine);
 
       boss::expressions::ExpressionSpanArguments custKeySpans;
       if(useDictionary) {
@@ -393,12 +276,6 @@ void RegisterBOSSTest(std::string const& name, Func&& func, size_t buildsize, si
 }
 
 void initAndRunBenchmarks(int argc, char** argv) {
-  for(auto scalefactor : std::vector<float>{1.0f, 2.0f, 5.0f, 10.0f}) {
-    for(auto numPartitions : std::vector<unsigned int>{1, 2, 5, 10, 100, 1000, 10'000, 100'000}) {
-      RegisterTest("ScanLimit", RunScanLimit, scalefactor, numPartitions, false);
-      RegisterTest("ScanLimit", RunScanLimit, scalefactor, numPartitions, true);
-    }
-  }
   for(auto buildsize : std::vector<size_t>{100'000, 1'000'000, 10'000'000, 100'000'000}) {
     for(auto probesize : std::vector<size_t>{100'000, 1'000'000, 10'000'000, 100'000'000}) {
       if(buildsize > probesize) {
@@ -426,9 +303,6 @@ void initAndRunBenchmarks(int argc, char** argv) {
 }
 
 int main(int argc, char** argv) {
-  int fakeArgc = 1;
-  folly::Init init{&fakeArgc, &argv};
-
   for(int i = 0; i < argc; ++i) {
     if(std::string("--library") == argv[i]) {
       if(++i < argc) {
@@ -437,22 +311,14 @@ int main(int argc, char** argv) {
     }
   }
 
-  auto tpchConnector =
-      connector::getConnectorFactory(connector::tpch::TpchConnectorFactory::kTpchConnectorName)
-          ->newConnector(kTpchConnectorId, std::make_shared<core::MemConfig>());
-  connector::registerConnector(tpchConnector);
-
   try {
     initAndRunBenchmarks(argc, argv);
   } catch(std::exception& e) {
     std::cerr << "caught exception in main: " << e.what() << std::endl;
-    connector::unregisterConnector(kTpchConnectorId);
     return EXIT_FAILURE;
   } catch(...) {
     std::cerr << "unhandled exception." << std::endl;
-    connector::unregisterConnector(kTpchConnectorId);
     return EXIT_FAILURE;
   }
-  connector::unregisterConnector(kTpchConnectorId);
   return EXIT_SUCCESS;
 }
