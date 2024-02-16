@@ -107,9 +107,9 @@ void runRadixJoin(benchmark::State& state, size_t buildsize, size_t probesize, s
     joins.reserve(numPartitions);
     for(int custOffset = 0, orderOffset = 0, i = 0; i < numPartitions; ++i) {
       std::shuffle(custkeyVec.begin() + custOffset,
-                   custkeyVec.end() + custOffset + custPartitionSize, rengine);
+                   custkeyVec.begin() + custOffset + custPartitionSize, rengine);
       std::shuffle(oCustKeyVec.begin() + orderOffset,
-                   oCustKeyVec.end() + orderOffset + orderPartitionSize, rengine);
+                   oCustKeyVec.begin() + orderOffset + orderPartitionSize, rengine);
 
       boss::expressions::ExpressionSpanArguments custKeySpans;
       if(useDictionary) {
@@ -291,8 +291,8 @@ void initAndRunBenchmarks(int argc, char** argv) {
         RegisterBOSSTest("RadixJoin", runRadixJoin, buildsize, probesize, numPartitions, true, true,
                          false);
         RegisterBOSSTest("RadixJoin", runRadixJoin, buildsize, probesize, numPartitions, false,
-                         true, false);
-        RegisterBOSSTest("RadixJoin", runRadixJoin, buildsize, probesize, numPartitions, true, true,
+                         false, true);
+        RegisterBOSSTest("RadixJoin", runRadixJoin, buildsize, probesize, numPartitions, true, false,
                          true);
       }
     }
