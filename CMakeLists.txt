@@ -82,8 +82,18 @@ else ()
             )
 endif ()
 
+include_directories(${BOSSVeloxEngine_BINARY_DIR}/deps/include)
+link_directories(${BOSSVeloxEngine_BINARY_DIR}/deps/lib)
 
-#################################### Targets ####################################
+set(VELOX_BUILD_TESTING ON)
+set(VELOX_CODEGEN_SUPPORT OFF)
+set(VELOX_ENABLE_HIVE_CONNECTOR ON)
+set(VELOX_ENABLE_TPCH_CONNECTOR ON)
+set(VELOX_ENABLE_SPARK_FUNCTIONS OFF)
+
+add_subdirectory(${VELOX_DIRS} velox)
+
+#################################### VeloxEngine Plugin ####################################
 
 set(ImplementationFiles Source/BOSSVeloxEngine.cpp Source/BOSSQueryBuilder.cpp Source/BridgeVelox.cpp Source/BossConnector.cpp
         ${VELOX_DIRS}/velox/exec/tests/utils/PlanBuilder.cpp
@@ -140,5 +150,94 @@ endif (MSVC)
 target_include_directories(BOSSVeloxEngine SYSTEM PUBLIC ${BOSSVeloxEngine_BINARY_DIR}/deps/include)
 add_dependencies(BOSSVeloxEngine BOSS)
 
+################################ ITT module interface ################################
+
+set(VTune_DIR "" CACHE PATH "Where to look for VTune installation")
+find_path(ITT_NOTIFY_INCLUDE_DIR "ittnotify.h" HINTS ${VTune_DIR}/include)
+
+add_library(ITTNotifySupport INTERFACE)
+target_sources(ITTNotifySupport INTERFACE ${PROJECT_SOURCE_DIR}/Benchmarks/ITTNotifySupport.hpp)
+target_include_directories(ITTNotifySupport INTERFACE ${PROJECT_SOURCE_DIR}/Benchmarks/)
+if(ITT_NOTIFY_INCLUDE_DIR)
+  message(VERBOSE "found itt notify header in ${ITT_NOTIFY_INCLUDE_DIR}")
+  target_include_directories(ITTNotifySupport SYSTEM INTERFACE ${ITT_NOTIFY_INCLUDE_DIR})
+  target_link_libraries(ITTNotifySupport INTERFACE ${ITT_NOTIFY_INCLUDE_DIR}/../lib64/libittnotify${CMAKE_STATIC_LIBRARY_SUFFIX})
+  if(NOT WIN32)
+    target_link_libraries(ITTNotifySupport dl)
+  endif(NOT WIN32)
+  if (NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+    target_compile_options(ITTNotifySupport INTERFACE -DWITH_ITT_NOTIFY)
+  else()
+    target_compile_options(ITTNotifySupport INTERFACE -DINTEL_NO_ITTNOTIFY_API)
+  endif()
+endif(ITT_NOTIFY_INCLUDE_DIR)
+
+################################ Benchmark executable ################################
+
+ExternalProject_Add(googlebenchmark
+	URL "https://github.com/google/benchmark/archive/refs/tags/v1.8.3.zip"
+  DOWNLOAD_DIR $ENV{HOME}/.cmake-downloads/${CMAKE_PROJECT_NAME}
+		CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=${BOSSVeloxEngine_BINARY_DIR}/deps -DBENCHMARK_DOWNLOAD_DEPENDENCIES=ON -DBENCHMARK_ENABLE_GTEST_TESTS=OFF $<IF:$<CONFIG:>,,-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}>
+                   -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}  -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER} -DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}
+                   -DCMAKE_CXX_FLAGS_RELEASE=${CMAKE_CXX_FLAGS_RELEASE} -DCMAKE_CXX_FLAGS_RELWITHDEBINFO=${CMAKE_CXX_FLAGS_RELWITHDEBINFO}
+  BUILD_BYPRODUCTS ${BOSSVeloxEngine_BINARY_DIR}/deps/lib/${CMAKE_SHARED_LIBRARY_PREFIX}benchmark${CMAKE_STATIC_LIBRARY_SUFFIX} 
+                   ${BOSSVeloxEngine_BINARY_DIR}/deps/lib/${CMAKE_SHARED_LIBRARY_PREFIX}benchmark_main${CMAKE_STATIC_LIBRARY_SUFFIX}
+  )
+  
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+
+set(BenchmarkFiles Benchmarks/VeloxBenchmarks.cpp)
+
+add_executable(VeloxBenchmarks ${BenchmarkFiles})
+target_compile_options(VeloxBenchmarks PUBLIC -msse4.2 -DFOLLY_CFG_NO_COROUTINES -DFOLLY_HAS_COROUTINES=0)
+target_link_libraries(VeloxBenchmarks Threads::Threads)
+if(WIN32)
+    target_link_libraries(VeloxBenchmarks shlwapi.lib)  
+endif(WIN32)
+target_link_libraries(VeloxBenchmarks ITTNotifySupport)
+add_dependencies(VeloxBenchmarks googlebenchmark)
+target_link_libraries(VeloxBenchmarks benchmark)
+target_link_libraries(VeloxBenchmarks benchmark_main)
+    
+target_link_libraries(VeloxBenchmarks ${BOSSVeloxEngine_BINARY_DIR}/deps/lib/${CMAKE_SHARED_LIBRARY_PREFIX}BOSS${CMAKE_SHARED_LIBRARY_SUFFIX})
+add_dependencies(VeloxBenchmarks BOSS)
+add_dependencies(VeloxBenchmarks BOSSVeloxEngine)
+
+target_compile_options(VeloxBenchmarks PUBLIC -DBENCHMARK_STATIC_DEFINE)
+target_link_libraries(VeloxBenchmarks Threads::Threads)
+set_target_properties(VeloxBenchmarks PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS ON)
+if(MSVC)
+    target_compile_options(VeloxBenchmarks PUBLIC "/Zc:__cplusplus")
+    target_compile_options(VeloxBenchmarks PUBLIC "/EHsc")
+endif()
+if(UNIX AND NOT APPLE)
+    target_link_libraries(VeloxBenchmarks rt)
+    target_link_libraries(VeloxBenchmarks dl)
+endif()
+
+target_include_directories(VeloxBenchmarks PUBLIC
+        ${VELOX_DIRS}
+        ${VELOX_DIRS}/velox/
+        ${VELOX_DIRS}/velox/external/xxhash/
+        ${VELOX_DIRS}/third_party/
+        ${VELOX_DIRS}/third_party/xsimd/
+        ${VELOX_DIRS}/third_party/xsimd/include/
+        ${BOSSVeloxEngine_BINARY_DIR}/../_deps/protobuf-src/src/)
+
+target_link_libraries(VeloxBenchmarks
+  velox_tpch_connector
+  velox_hive_connector
+  velox_dwio_dwrf_proto
+  velox_type
+  velox_vector
+  velox_exec
+  velox_exec_test_lib
+  velox_memory
+)
+
+################################ Installation ################################
+
 set_target_properties(BOSSVeloxEngine PROPERTIES INSTALL_RPATH_USE_LINK_PATH TRUE)
 install(TARGETS BOSSVeloxEngine LIBRARY DESTINATION lib)
+install(TARGETS VeloxBenchmarks RUNTIME DESTINATION bin)
