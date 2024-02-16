@@ -85,14 +85,6 @@ endif ()
 include_directories(${BOSSVeloxEngine_BINARY_DIR}/deps/include)
 link_directories(${BOSSVeloxEngine_BINARY_DIR}/deps/lib)
 
-set(VELOX_BUILD_TESTING ON)
-set(VELOX_CODEGEN_SUPPORT OFF)
-set(VELOX_ENABLE_HIVE_CONNECTOR ON)
-set(VELOX_ENABLE_TPCH_CONNECTOR ON)
-set(VELOX_ENABLE_SPARK_FUNCTIONS OFF)
-
-add_subdirectory(${VELOX_DIRS} velox)
-
 #################################### VeloxEngine Plugin ####################################
 
 set(ImplementationFiles Source/BOSSVeloxEngine.cpp Source/BOSSQueryBuilder.cpp Source/BridgeVelox.cpp Source/BossConnector.cpp
