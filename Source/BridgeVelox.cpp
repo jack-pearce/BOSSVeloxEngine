@@ -197,3 +197,20 @@ namespace boss::engines::velox {
     }
 
 } // namespace boss::engines::velox
+
+auto fmt::formatter<boss::engines::velox::BossType>::format(boss::engines::velox::BossType type,
+                                                            format_context& ctx) const {
+  string_view name = "unknown";
+  switch(type) {
+  case boss::engines::velox::bINTEGER:
+    name = "bInteger";
+    break;
+  case boss::engines::velox::bBIGINT:
+    name = "bBIGINT";
+    break;
+  case boss::engines::velox::bDOUBLE:
+    name = "bDOUBLE";
+    break;
+  }
+  return formatter<string_view>::format(name, ctx);
+}

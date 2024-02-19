@@ -61,3 +61,7 @@ namespace boss::engines::velox {
                                      std::vector<VectorPtr> children, memory::MemoryPool *pool);
 
 } // namespace boss::engines::velox
+
+template <> struct fmt::formatter<boss::engines::velox::BossType> : formatter<string_view> {
+  auto format(boss::engines::velox::BossType c, format_context& ctx) const;
+};

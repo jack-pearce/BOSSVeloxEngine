@@ -49,10 +49,10 @@ BossDataSource::BossDataSource(
 }
 
 void BossDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
-  VELOX_CHECK_EQ(currentSplit_, nullptr,
+  VELOX_CHECK_NULL(currentSplit_,
                  "Previous split has not been processed yet. Call next() to process the split.");
   currentSplit_ = std::dynamic_pointer_cast<BossConnectorSplit>(split);
-  VELOX_CHECK(currentSplit_, "Wrong type of split for BossDataSource.");
+  VELOX_CHECK_NOT_NULL(currentSplit_, "Wrong type of split for BossDataSource.");
 
   if(!firstAddSplit_) {
 #ifdef SUPPORT_NEW_NUM_SPLITS
