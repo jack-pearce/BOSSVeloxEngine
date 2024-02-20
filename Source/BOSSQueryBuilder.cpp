@@ -1,4 +1,5 @@
 #include "BOSSQueryBuilder.h"
+#include "CommonUtilities.h"
 
 namespace boss::engines::velox {
 
@@ -169,6 +170,106 @@ namespace boss::engines::velox {
                 curVeloxExpr.remainingFilter = std::move(tmp);
             } else VELOX_FAIL("unexpected Filter type")
         }
+    }
+
+    // Old format: "Table"_("Column"_("Id"_, "List"_(1, 2, 3), "Column"_("Value"_
+    // "List"_(0.1, 10.0, 5.2))) New format: "Table"_("Id"_("List"_(1, 2, 3)),
+    // "Value"_("List"_(0.1, 10.0, 5.2))))
+    std::unordered_map<std::string, TypePtr>
+    getColumns(ComplexExpression&& expression, std::vector<BufferPtr> const& indicesVec,
+               std::vector<RowVectorPtr>& rowDataVec, RowTypePtr& tableSchema,
+               std::vector<size_t>& spanRowCountVec, memory::MemoryPool* pool) {
+      ExpressionArguments columns = std::move(expression).getArguments();
+      std::vector<std::string> colNameVec;
+      std::vector<std::shared_ptr<const Type>> colTypeVec;
+      std::vector<std::vector<VectorPtr>> colDataListVec;
+      std::unordered_map<std::string, TypePtr> fileColumnNamesMap(columns.size());
+
+      std::for_each(
+          std::make_move_iterator(columns.begin()), std::make_move_iterator(columns.end()),
+          [&colNameVec, &colTypeVec, &colDataListVec, pool, &fileColumnNamesMap,
+           &indicesVec](auto&& columnExpr) {
+            auto column = get<ComplexExpression>(std::forward<decltype(columnExpr)>(columnExpr));
+            auto [head, unused_, dynamics, spans] = std::move(column).decompose();
+
+#ifdef USE_NEW_TABLE_FORMAT
+            auto columnName = head.getName();
+            auto dynamic = get<ComplexExpression>(std::move(dynamics.at(0)));
+#else
+            auto columnName = get<Symbol>(std::move(dynamics.at(0))).getName();
+            auto dynamic = get<ComplexExpression>(std::move(dynamics.at(1)));
+#endif
+            std::transform(columnName.begin(), columnName.end(), columnName.begin(), ::tolower);
+
+            auto list = transformDynamicsToSpans(std::move(dynamic));
+            auto [listHead, listUnused_, listDynamics, listSpans] = std::move(list).decompose();
+            if(listSpans.empty()) {
+              return;
+            }
+
+            int numSpan = 0;
+            std::vector<VectorPtr> colDataVec;
+            for(auto& subSpan : listSpans) {
+              BufferPtr indices = nullptr;
+              if(!indicesVec.empty()) {
+                indices = indicesVec[numSpan++];
+              }
+              VectorPtr subColData = std::visit(
+                  [pool, indices, columnName]<typename T>(boss::Span<T>&& typedSpan) -> VectorPtr {
+                    if constexpr(std::is_same_v<T, int32_t> || std::is_same_v<T, int64_t> ||
+                                 std::is_same_v<T, double_t>) {
+                      return spanToVelox<T>(std::move(typedSpan), pool, indices);
+                    } else {
+                      throw std::runtime_error("unsupported column type in Select: " + columnName +
+                                               " with type: " + std::string(typeid(T).name()));
+                    }
+                  },
+                  std::move(subSpan));
+              colDataVec.push_back(std::move(subColData));
+            }
+            auto columnType = colDataVec[0]->type();
+            colNameVec.emplace_back(columnName);
+            colTypeVec.emplace_back(columnType);
+            fileColumnNamesMap.insert(std::make_pair(columnName, columnType));
+            colDataListVec.push_back(std::move(colDataVec));
+          });
+
+      // TODO this doesn't seem to handle dictionary encoded strings from int32 support branch of
+      // Arrow
+      auto listSize = colDataListVec[0].size();
+      for(auto i = 0; i < listSize; i++) {
+        spanRowCountVec.push_back(colDataListVec[0][i]->size());
+        std::vector<VectorPtr> rowData;
+        for(auto j = 0; j < columns.size(); j++) {
+          assert(colDataListVec[j].size() == listSize);
+          rowData.push_back(std::move(colDataListVec[j][i]));
+        }
+        auto rowVector = makeRowVectorNoCopy(colNameVec, rowData, pool);
+        rowDataVec.push_back(std::move(rowVector));
+      }
+
+      tableSchema =
+          TypeFactory<TypeKind::ROW>::create(std::move(colNameVec), std::move(colTypeVec));
+      return fileColumnNamesMap;
+    }
+
+    void QueryBuilder::getTableMeta(ComplexExpression&& expression) {
+      if(!curVeloxExpr.tableName.empty()) {
+        veloxExprList.push_back(curVeloxExpr);
+        curVeloxExpr.clear();
+      }
+      curVeloxExpr.tableName = fmt::format("Table{}", tableCnt++); // indicate table names
+      curVeloxExpr.fileColumnNamesMap =
+          getColumns(std::move(expression), curVeloxExpr.indicesVec, curVeloxExpr.rowDataVec,
+                     curVeloxExpr.tableSchema, curVeloxExpr.spanRowCountVec, &pool_);
+      // std::cout << curVeloxExpr.tableName << ":" << std::endl;
+      /*auto inputSize =
+          std::accumulate(curVeloxExpr.rowDataVec.begin(), curVeloxExpr.rowDataVec.end(), 0,
+                                       [](size_t total, auto const& vec) {
+            std::cout << "  span size: " << vec->size() << std::endl;
+            return total + vec->size();
+          });
+      std::cout << " input size: " << inputSize << std::endl;*/
     }
 
     void QueryBuilder::getFileColumnNamesMap() {

@@ -1,5 +1,5 @@
 #include "BOSSVeloxEngine.hpp"
-#include "BOSSCoreTmp.h"
+#include "CommonUtilities.h"
 
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
@@ -37,192 +37,9 @@ using std::get;
 using std::is_invocable_v;
 using std::move;
 using std::unordered_map;
-using std::string_literals::operator ""s;
-using boss::utilities::operator ""_;
-using boss::ComplexExpression;
-using boss::Span;
-using boss::Symbol;
-using boss::Expression;
-using boss::expressions::generic::isComplexExpression;
-
-
-std::ostream &operator<<(std::ostream &s, std::vector<std::int64_t> const &input /*unused*/) {
-    std::for_each(begin(input), prev(end(input)),
-                  [&s = s << "["](auto &&element) { s << element << ", "; });
-    return (input.empty() ? s : (s << input.back())) << "]";
-}
-
-namespace boss {
-    using std::vector;
-    using SpanInputs = std::variant<std::vector<std::int32_t>, vector<std::int64_t>, vector<std::double_t>,
-                                    vector<std::string>, vector<Symbol>>;
-} // namespace boss
+using std::string_literals::operator""s;
 
 namespace boss::engines::velox {
-    using ComplexExpression = boss::expressions::ComplexExpression;
-    template<typename... T>
-    using ComplexExpressionWithStaticArguments =
-            boss::expressions::ComplexExpressionWithStaticArguments<T...>;
-    using Expression = boss::expressions::Expression;
-    using ExpressionArguments = boss::expressions::ExpressionArguments;
-    using ExpressionSpanArguments = boss::expressions::ExpressionSpanArguments;
-    using ExpressionSpanArgument = boss::expressions::ExpressionSpanArgument;
-    using expressions::generic::ArgumentWrapper;
-    using expressions::generic::ExpressionArgumentsWithAdditionalCustomAtomsWrapper;
-
-    int32_t dateToInt32(const std::string &str) {
-        std::istringstream iss;
-        iss.str(str);
-        struct std::tm tm = {};
-        iss >> std::get_time(&tm, "%Y-%m-%d");
-        auto t = std::mktime(&tm);
-        return (int32_t) std::chrono::duration_cast<std::chrono::days>(
-                std::chrono::system_clock::from_time_t(t).time_since_epoch())
-                .count();
-    }
-
-    void yearToInt32(std::vector<std::string> &projectionList) {
-        auto out = fmt::format("cast(((cast({} AS DOUBLE) + 719563.285) / 365.265) AS INTEGER)",
-                               projectionList.back());
-        projectionList.pop_back();
-        projectionList.pop_back();
-        projectionList.push_back(out);
-    }
-
-    Expression dateProcess(Expression &&e) {
-        return visit(boss::utilities::overload(
-                             [](ComplexExpression &&e) -> Expression {
-                                 auto head = e.getHead();
-                                 if (head.getName() == "DateObject") {
-                                     auto argument = e.getArguments().at(0);
-                                     std::stringstream out;
-                                     out << argument;
-                                     auto dateString = out.str().substr(1, 10);
-                                     return dateToInt32(dateString);
-                                 }
-                                 // at least evaluate all the arguments
-                                 auto [_, statics, dynamics, spans] = std::move(e).decompose();
-                                 std::transform(std::make_move_iterator(dynamics.begin()),
-                                                std::make_move_iterator(dynamics.end()),
-                                                dynamics.begin(),
-                                                [](auto &&arg) { return dateProcess(std::move(arg)); });
-                                 return ComplexExpression{std::move(head), std::move(statics),
-                                                          std::move(dynamics), std::move(spans)};
-                             },
-                             [](auto &&e) -> Expression { return std::forward<decltype(e)>(e); }),
-                     std::move(e));
-    }
-
-    template<typename... StaticArgumentTypes>
-    ComplexExpressionWithStaticArguments<StaticArgumentTypes...>
-    transformDynamicsToSpans(ComplexExpressionWithStaticArguments<StaticArgumentTypes...> &&input_) {
-        std::vector<boss::SpanInputs> spanInputs;
-        auto [head, statics, dynamics, oldSpans] = std::move(input_).decompose();
-
-        auto it = std::move_iterator(dynamics.begin());
-        for (; it != std::move_iterator(dynamics.end()); ++it) {
-            if (!std::visit(
-                    [&spanInputs]<typename InputType>(InputType &&argument) {
-                        using Type = std::decay_t<InputType>;
-                        if constexpr (boss::utilities::isVariantMember<std::vector<Type>,
-                                boss::SpanInputs>::value) {
-                            if (!spanInputs.empty() &&
-                                std::holds_alternative<std::vector<Type>>(spanInputs.back())) {
-                                std::get<std::vector<Type>>(spanInputs.back()).push_back(argument);
-                            } else {
-                                spanInputs.push_back(std::vector<Type>{argument});
-                            }
-                            return true;
-                        }
-                        return false;
-                    },
-                    dateProcess(*it))) {
-                break;
-            }
-        }
-        dynamics.erase(dynamics.begin(), it.base());
-
-        ExpressionSpanArguments spans;
-        std::transform(
-                std::move_iterator(spanInputs.begin()), std::move_iterator(spanInputs.end()),
-                std::back_inserter(spans), [](auto &&untypedInput) {
-                    return std::visit(
-                            []<typename Element>(std::vector<Element> &&input) -> ExpressionSpanArgument {
-                                auto *ptr = input.data();
-                                auto size = input.size();
-                                spanReferenceCounter.add(ptr, [v = std::move(input)]() {});
-                                return boss::Span<Element>(ptr, size,
-                                                           [ptr]() { spanReferenceCounter.remove(ptr); });
-                            },
-                            std::forward<decltype(untypedInput)>(untypedInput));
-                });
-
-        std::copy(std::move_iterator(oldSpans.begin()), std::move_iterator(oldSpans.end()),
-                  std::back_inserter(spans));
-        return {std::move(head), std::move(statics), std::move(dynamics), std::move(spans)};
-    }
-
-    Expression transformDynamicsToSpans(Expression &&input) {
-        return std::visit(
-                [](auto &&x) -> Expression {
-                    if constexpr (std::is_same_v<std::decay_t<decltype(x)>, ComplexExpression>) {
-                        return transformDynamicsToSpans(std::forward<decltype(x)>(x));
-                    } else {
-                        return x;
-                    }
-                },
-                std::move(input));
-    }
-
-    template<typename T>
-    VectorPtr spanToVelox(boss::Span<T> &&span, memory::MemoryPool *pool, BufferPtr indices = nullptr) {
-        BossArray bossArray(span.size(), span.begin(), std::move(span));
-
-        auto createDictVector = [](BufferPtr &indices, auto flatVecPtr) {
-            auto indicesSize = indices->size() / sizeof(int32_t);
-            return BaseVector::wrapInDictionary(
-                    BufferPtr(nullptr), indices, indicesSize, std::move(flatVecPtr));
-        };
-
-        auto createVeloxVector = [&](auto bossType) {
-            auto flatVecPtr = importFromBossAsOwner(bossType, bossArray, pool);
-            if (indices == nullptr) {
-                return flatVecPtr;
-            }
-            return createDictVector(indices, flatVecPtr);
-        };
-
-        if constexpr (std::is_same_v<T, int32_t>) {
-            return createVeloxVector(BossType::bINTEGER);
-        } else if constexpr (std::is_same_v<T, int64_t>) {
-            return createVeloxVector(BossType::bBIGINT);
-        } else if constexpr (std::is_same_v<T, double_t>) {
-            return createVeloxVector(BossType::bDOUBLE);
-        }
-    }
-
-    template<typename T>
-    boss::Span<const T> createBossSpan(VectorPtr const& vec) {
-        auto const *data = vec->values()->as<T>();
-        auto length = vec->size();
-        VectorPtr ptrCopy = vec;
-        return boss::Span<const T>(data, length, [v = std::move(ptrCopy)]() {});
-    }
-
-    ExpressionSpanArgument veloxtoSpan(VectorPtr const& vec) {
-        if (vec->typeKind() == TypeKind::INTEGER) {
-            return createBossSpan<int32_t>(vec);
-        }
-        if (vec->typeKind() == TypeKind::BIGINT) {
-            return createBossSpan<int64_t>(vec);
-        }
-        if (vec->typeKind() == TypeKind::DOUBLE) {
-            return createBossSpan<double_t>(vec);
-        }
-        throw std::runtime_error("veloxToSpan: array type not supported: " +
-                                 facebook::velox::mapTypeKindToName(vec->typeKind()));
-    }
-
     bool cmpFunCheck(const std::string &input) {
         static std::vector<std::string> const cmpFun{"Greater", "Equal", "StringContainsQ"};
         for (const auto &cmpOp: cmpFun) {
@@ -429,85 +246,6 @@ namespace boss::engines::velox {
                 std::move(expression));
     }
 
-// Old format: "Table"_("Column"_("Id"_, "List"_(1, 2, 3), "Column"_("Value"_ "List"_(0.1, 10.0, 5.2)))
-// New format: "Table"_("Id"_("List"_(1, 2, 3)), "Value"_("List"_(0.1, 10.0, 5.2))))
-    std::unordered_map<std::string, TypePtr> getColumns(
-            ComplexExpression &&expression, std::vector<BufferPtr> const& indicesVec,
-            std::vector<RowVectorPtr> &rowDataVec, RowTypePtr &tableSchema, std::vector<size_t> &spanRowCountVec, memory::MemoryPool *pool) {
-        ExpressionArguments columns = std::move(expression).getArguments();
-        std::vector<std::string> colNameVec;
-        std::vector<std::shared_ptr<const Type>> colTypeVec;
-        std::vector<std::vector<VectorPtr>> colDataListVec;
-        std::unordered_map<std::string, TypePtr> fileColumnNamesMap(columns.size());
-
-        std::for_each(
-                std::make_move_iterator(columns.begin()), std::make_move_iterator(columns.end()),
-                [&colNameVec, &colTypeVec, &colDataListVec, pool, &fileColumnNamesMap, &indicesVec](
-                        auto &&columnExpr) {
-                    auto column = get < ComplexExpression > (std::forward<decltype(columnExpr)>(columnExpr));
-                    auto [head, unused_, dynamics, spans] = std::move(column).decompose();
-
-#ifdef USE_NEW_TABLE_FORMAT
-                    auto columnName = head.getName();
-                    auto dynamic = get<ComplexExpression>(std::move(dynamics.at(0)));
-#else
-                    auto columnName = get<Symbol>(std::move(dynamics.at(0))).getName();
-                    auto dynamic = get<ComplexExpression>(std::move(dynamics.at(1)));
-#endif
-                    std::transform(columnName.begin(), columnName.end(), columnName.begin(),
-                                   ::tolower);
-
-                    auto list = transformDynamicsToSpans(std::move(dynamic));
-                    auto [listHead, listUnused_, listDynamics, listSpans] = std::move(list).decompose();
-                    if (listSpans.empty()) {
-                        return;
-                    }
-
-                    int numSpan = 0;
-                    std::vector<VectorPtr> colDataVec;
-                    for (auto &subSpan: listSpans) {
-                        BufferPtr indices = nullptr;
-                        if (!indicesVec.empty()) {
-                            indices = indicesVec[numSpan++];
-                        }
-                        VectorPtr subColData = std::visit(
-                                [pool, indices, columnName]<typename T>(boss::Span<T> &&typedSpan) -> VectorPtr {
-                                    if constexpr (std::is_same_v<T, int32_t> || std::is_same_v<T, int64_t> ||
-                                        std::is_same_v<T, double_t>) {
-                                        return spanToVelox<T>(std::move(typedSpan), pool, indices);
-                                    } else {
-                                        throw std::runtime_error(
-                                            "unsupported column type in Select: " + columnName
-                                            + " with type: "+ std::string(typeid(T).name()));
-                                    }
-                                },
-                                std::move(subSpan));
-                        colDataVec.push_back(std::move(subColData));
-                    }
-                    auto columnType = colDataVec[0]->type();
-                    colNameVec.emplace_back(columnName);
-                    colTypeVec.emplace_back(columnType);
-                    fileColumnNamesMap.insert(std::make_pair(columnName, columnType));
-                    colDataListVec.push_back(std::move(colDataVec));
-                });
-
-        // TODO this doesn't seem to handle dictionary encoded strings from int32 support branch of Arrow
-        auto listSize = colDataListVec[0].size();
-        for (auto i = 0; i < listSize; i++) {
-            spanRowCountVec.push_back(colDataListVec[0][i]->size());
-            std::vector<VectorPtr> rowData;
-            for (auto j = 0; j < columns.size(); j++) {
-                assert(colDataListVec[j].size() == listSize);
-                rowData.push_back(std::move(colDataListVec[j][i]));
-            }
-            auto rowVector = makeRowVectorNoCopy(colNameVec, rowData, pool);
-            rowDataVec.push_back(std::move(rowVector));
-        }
-
-        tableSchema = TypeFactory<TypeKind::ROW>::create(std::move(colNameVec), std::move(colTypeVec));
-        return fileColumnNamesMap;
-    }
-
     std::vector<BufferPtr> getIndices(ExpressionSpanArguments &&listSpans) {
         if (listSpans.empty()) {
             throw std::runtime_error("get index error");
@@ -537,27 +275,6 @@ namespace boss::engines::velox {
       return getIndices(std::move(spans));
     }
 #endif // SUPPORT_RADIX_JOINS
-
-    void QueryBuilder::getTableMeta(ComplexExpression &&expression) {
-        if (!curVeloxExpr.tableName.empty()) {
-            veloxExprList.push_back(curVeloxExpr);
-            curVeloxExpr.clear();
-        }
-        curVeloxExpr.tableName = fmt::format("Table{}", tableCnt++); // indicate table names
-        curVeloxExpr.fileColumnNamesMap = getColumns(std::move(expression),
-                                                     curVeloxExpr.indicesVec,
-                                                     curVeloxExpr.rowDataVec,
-                                                     curVeloxExpr.tableSchema,
-                                                     curVeloxExpr.spanRowCountVec, &pool_);
-        //std::cout << curVeloxExpr.tableName << ":" << std::endl;
-        /*auto inputSize =
-            std::accumulate(curVeloxExpr.rowDataVec.begin(), curVeloxExpr.rowDataVec.end(), 0,
-                                         [](size_t total, auto const& vec) {
-              std::cout << "  span size: " << vec->size() << std::endl;
-              return total + vec->size();
-            });
-        std::cout << " input size: " << inputSize << std::endl;*/
-    }
 
     // translate main
     void bossExprToVelox(Expression &&expression, QueryBuilder &queryBuilder) {
@@ -679,132 +396,80 @@ namespace boss::engines::velox {
         return true;
       }
 
-        boss::expressions::ExpressionArguments columns;
+      auto pool = memory::MemoryManager::getInstance()->addLeafPool();
 
-#ifdef SUPPORT_UNION_OPERATOR
-        auto evalAndAddOutputSpans = [&, this](auto&& e) {
-          QueryBuilder queryBuilder(*pool_.get());
-          bossExprToVelox(std::move(e), queryBuilder);
-          if(queryBuilder.tableCnt != 0) {
-            queryBuilder.getFileColumnNamesMap();
-            queryBuilder.reformVeloxExpr();
-            std::vector<core::PlanNodeId> scanIds;
-            auto planPtr = queryBuilder.getVeloxPlanBuilder(scanIds);
-            params_->planNode = planPtr;
-            params_->maxDrivers = maxThreads;
-            params_->copyResult = false;
-            auto results = veloxRunQueryParallel(*params_, cursor_, scanIds, numSplits);
-            if(!cursor_) {
-              throw std::runtime_error("Query terminated with error");
-            }
-#ifdef DebugInfo
-            veloxPrintResults(results);
-            std::cout << std::endl;
-            auto& task = cursor_->task();
-            auto const& stats = task->taskStats();
-            std::cout << printPlanWithStats(*planPtr, stats, false) << std::endl;
-#endif
-            if(!results.empty()) {
-              for(auto& result : results) {
-                // make sure that lazy vectors are computed
-                result->loadedVector();
-                /*if(result->containsLazyNotLoaded())*/ {
-                  // auto copy = BaseVector::create<RowVector>(result->type(), result->size(),
-                  // pool_); copy->copy(result.get(), 0, 0, result->size()); result =
-                  // std::move(copy);
-                }
-              }
-              // std::cout << "output spans num: " << results.size() << std::endl;
-              // std::cout << "column num: " << results[0]->childrenSize() << std::endl;
-              /*auto outputSize = std::accumulate(
-                  results.begin(), results.end(), 0, [](size_t total, auto const& vec) {
-                    std::cout << "  span size: " << vec->size() << std::endl;
-                    return total + vec->size();
-                  });
-              std::cout << "output size: " << outputSize << std::endl;*/
-              auto const& rowType = dynamic_cast<const RowType*>(results[0]->type().get());
-              for(int i = 0; i < results[0]->childrenSize(); ++i) {
-                ExpressionSpanArguments spans;
-                for(auto& result : results) {
-                  auto& vec = result->childAt(i);
-                  BaseVector::flattenVector(vec); // flatten dictionaries
-                                                  // (TODO: can this be done in parallel?)
-                  spans.emplace_back(veloxtoSpan(vec));
-                }
-                auto const& name = rowType->nameOf(i);
-#ifdef USE_NEW_TABLE_FORMAT
-                columns.emplace_back(ComplexExpression(Symbol(name), {}, {}, std::move(spans)));
-#else
-                boss::expressions::ExpressionArguments args;
-                args.emplace_back(Symbol(name));
-                args.emplace_back(ComplexExpression("List"_, {}, {}, std::move(spans)));
-                columns.emplace_back(ComplexExpression("Column"_, std::move(args)));
-#endif // USE_NEW_TABLE_FORMAT
-              }
-            }
-          }
-        };
+      {
+        static std::mutex m;
+        std::lock_guard const lock(m);
+        pools_.push_back(pool); // TODO: ideally handle lifetime through the spans
+                                // (i.e. destroy once no span refers to it)
+      }
 
-        if(e.getHead().getName() == "Union") {
-          auto [_, statics, dynamics, spans] = std::move(e).decompose();
-          for(auto&& arg : dynamics) {
-            evalAndAddOutputSpans(std::move(arg));
-          }
-        } else {
-          evalAndAddOutputSpans(std::move(e));
-        }
-#else
-        QueryBuilder queryBuilder(*pool_.get());
+      auto params = std::make_unique<CursorParameters>();
+      params->queryCtx = std::make_shared<core::QueryCtx>(/*executor.get()*/);
+      std::unique_ptr<TaskCursor> cursor;
+
+      boss::expressions::ExpressionArguments columns;
+      auto evalAndAddOutputSpans = [&, this](auto&& e) {
+        QueryBuilder queryBuilder(*pool.get());
         bossExprToVelox(std::move(e), queryBuilder);
         if(queryBuilder.tableCnt != 0) {
-            queryBuilder.getFileColumnNamesMap();
-            queryBuilder.reformVeloxExpr();
-            std::vector<core::PlanNodeId> scanIds;
-            auto planPtr = queryBuilder.getVeloxPlanBuilder(scanIds);
-            params_->planNode = planPtr;
-            params_->maxDrivers = 1; // Max number of threads
-#ifndef SUPPORT_NEW_NUM_SPLITS
-            const int numSplits = 64;
-#endif
-            params_->copyResult = false;
-            auto results = veloxRunQueryParallel(*params_, cursor_, scanIds, numSplits);
-            if(!cursor_) {
-                throw std::runtime_error("Query terminated with error");
-            }
+          queryBuilder.getFileColumnNamesMap();
+          queryBuilder.reformVeloxExpr();
+          std::vector<core::PlanNodeId> scanIds;
+          auto planPtr = queryBuilder.getVeloxPlanBuilder(scanIds);
+          params->planNode = planPtr;
+          params->maxDrivers = maxThreads;
+          if(maxThreads < 2) {
+            params->singleThreaded = true;
+          }
+          params->copyResult = false;
+          auto results = veloxRunQueryParallel(*params, cursor, scanIds, numSplits);
+          if(!cursor) {
+            throw std::runtime_error("Query terminated with error");
+          }
 #ifdef DebugInfo
-            veloxPrintResults(results);
-            std::cout << std::endl;
-            auto& task = cursor->task();
-            auto const& stats = task->taskStats();
-            std::cout << printPlanWithStats(*planPtr, stats, false) << std::endl;
-#endif
-            if(!results.empty()) {
-              for(auto& result : results) {
-                // make sure that lazy vectors are computed
-                result->loadedVector();
-              }
-              auto const& rowType = dynamic_cast<const RowType*>(results[0]->type().get());
-              for(int i = 0; i < results[0]->childrenSize(); ++i) {
-                ExpressionSpanArguments spans;
-                for(auto& result : results) {
-                  auto& vec = result->childAt(i);
-                  BaseVector::flattenVector(vec); // flatten dictionaries
-                                                  // (TODO: can this be done in parallel?)
-                  spans.emplace_back(veloxtoSpan(vec));
-                }
-                auto const& name = rowType->nameOf(i);
-#ifdef USE_NEW_TABLE_FORMAT
-                columns.emplace_back(ComplexExpression(Symbol(name), {}, {}, std::move(spans)));
-#else
-                boss::expressions::ExpressionArguments args;
-                args.emplace_back(Symbol(name));
-                args.emplace_back(ComplexExpression("List"_, {}, {}, std::move(spans)));
-                columns.emplace_back(ComplexExpression("Column"_, std::move(args)));
-#endif // USE_NEW_TABLE_FORMAT
-              }
+          veloxPrintResults(results);
+          std::cout << std::endl;
+          auto& task = cursor->task();
+          auto const& stats = task->taskStats();
+          std::cout << printPlanWithStats(*planPtr, stats, false) << std::endl;
+    #endif
+          if(!results.empty()) {
+            for(auto& result : results) {
+              // make sure that lazy vectors are computed
+              result->loadedVector();
             }
+            auto const& rowType = dynamic_cast<const RowType*>(results[0]->type().get());
+            for(int i = 0; i < results[0]->childrenSize(); ++i) {
+              ExpressionSpanArguments spans;
+              for(auto& result : results) {
+                auto& vec = result->childAt(i);
+                BaseVector::flattenVector(vec); // flatten dictionaries
+                spans.emplace_back(veloxtoSpan(vec));
+              }
+              auto const& name = rowType->nameOf(i);
+#ifdef USE_NEW_TABLE_FORMAT
+              columns.emplace_back(ComplexExpression(Symbol(name), {}, {}, std::move(spans)));
+#else
+              boss::expressions::ExpressionArguments args;
+              args.emplace_back(Symbol(name));
+              args.emplace_back(ComplexExpression("List"_, {}, {}, std::move(spans)));
+              columns.emplace_back(ComplexExpression("Column"_, std::move(args)));
+#endif // USE_NEW_TABLE_FORMAT
+            }
+          }
         }
-#endif // SUPPORT_UNION_OPERATOR
+      };
+
+      if(e.getHead().getName() == "Union") {
+        auto [_, statics, dynamics, spans] = std::move(e).decompose();
+        for(auto&& arg : dynamics) {
+          evalAndAddOutputSpans(std::move(arg));
+        }
+      } else {
+        evalAndAddOutputSpans(std::move(e));
+      }
       return ComplexExpression("Table"_, std::move(columns));
     }
 
@@ -823,29 +488,25 @@ namespace boss::engines::velox {
           connector::getConnectorFactory(boss::engines::velox::BossConnectorFactory::kBossConnectorName)
               ->newConnector(boss::engines::velox::kBossConnectorId, nullptr);
       connector::registerConnector(bossConnector);
-      pool_ = memory::MemoryManager::getInstance()->addLeafPool();
-      executor_ = std::make_shared<folly::CPUThreadPoolExecutor>(std::thread::hardware_concurrency());
-      params_ = std::make_unique<CursorParameters>();
-      params_->queryCtx = std::make_shared<core::QueryCtx>(executor_.get());
     }
 
     Engine::~Engine() { connector::unregisterConnector(boss::engines::velox::kBossConnectorId); }
 
 } // namespace boss::engines::velox
 
-static auto &enginePtr(bool initialise = true) {
-    static auto engine = std::unique_ptr<boss::engines::velox::Engine>();
-    if (!engine && initialise) {
-        engine.reset(new boss::engines::velox::Engine());
-    }
-    return engine;
+static auto& enginePtr(bool initialise = true) {
+  static std::mutex m;
+  std::lock_guard const lock(m);
+  static auto engine = std::unique_ptr<boss::engines::velox::Engine>();
+  if(!engine && initialise) {
+    engine.reset(new boss::engines::velox::Engine());
+  }
+  return engine;
 }
 
-extern "C" BOSSExpression *evaluate(BOSSExpression *e) {
-    static std::mutex m;
-    std::lock_guard const lock(m);
-    auto *r = new BOSSExpression{enginePtr()->evaluate(std::move(e->delegate))};
-    return r;
+extern "C" BOSSExpression* evaluate(BOSSExpression* e) {
+  auto* r = new BOSSExpression{enginePtr()->evaluate(std::move(e->delegate))};
+  return r;
 }
 
 extern "C" void reset() { enginePtr(false).reset(nullptr); }

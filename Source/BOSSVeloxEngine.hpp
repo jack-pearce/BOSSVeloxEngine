@@ -32,10 +32,7 @@ namespace boss::engines::velox {
         boss::Expression evaluate(boss::ComplexExpression &&e);
 
     private:
-        std::shared_ptr<folly::Executor> executor_; // execute Velox physical plan, e.g. projection
-        std::shared_ptr<memory::MemoryPool> pool_;
-        std::unique_ptr<CursorParameters> params_;
-        std::unique_ptr<TaskCursor> cursor_;
+        std::vector<std::shared_ptr<memory::MemoryPool>> pools_;
 
         int32_t maxThreads = 1;
         int32_t numSplits = 64;

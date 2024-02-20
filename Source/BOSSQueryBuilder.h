@@ -3,7 +3,6 @@
 #include "BridgeVelox.h"
 
 #define SUPPORT_RADIX_JOINS
-#define SUPPORT_UNION_OPERATOR
 #define SUPPORT_NEW_NUM_SPLITS
 
 namespace boss::engines::velox {
