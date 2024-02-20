@@ -4,9 +4,9 @@
 #include <benchmark/benchmark.h>
 
 #include <cmath>
+#include <future>
 #include <iostream>
 #include <random>
-#include <thread>
 
 using boss::utilities::operator""_; // NOLINT(misc-unused-using-decls) clang-tidy bug
 
@@ -199,31 +199,33 @@ void runRadixJoin(benchmark::State& state, size_t buildsize, size_t probesize, s
     // RUN
     if(multithreaded) {
       auto maxThreads = std::thread::hardware_concurrency();
-      std::vector<std::thread> threads;
-      threads.reserve(maxThreads);
+      std::vector<std::future<boss::Expression>> futures;
+      futures.reserve(maxThreads);
+      auto getResults = [&]() {
+        for(auto&& future : futures) {
+          auto dummyResult = std::move(future.get());
+          benchmark::DoNotOptimize(dummyResult);
+          if(error_handling(dummyResult)) {
+            failed = true;
+          }
+        }
+        futures.clear();
+      };
       for(int i = 0; i < joins.size(); ++i) {
         if(failed) {
           break;
         }
-        if(threads.size() >= maxThreads) {
-          for(auto& thread : threads) {
-            thread.join();
-          }
-          threads.clear();
+        if(futures.size() >= maxThreads) {
+          getResults();
         }
-        threads.emplace_back(
-            [&joins, &failed, &eval, &error_handling](int idx) {
-              auto dummyResult = eval(std::move(joins[idx]));
-              benchmark::DoNotOptimize(dummyResult);
-              if(error_handling(dummyResult)) {
-                failed = true;
-              }
+        futures.emplace_back(std::async(
+            std::launch::async,
+            [&joins, &eval](int idx) {
+              return eval(std::move(joins[idx]));
             },
-            i);
+            i));
       }
-      for(auto& thread : threads) {
-        thread.join();
-      }
+      getResults();
     } else {
       for(auto&& join : joins) {
         auto dummyResult = eval(std::move(join));
@@ -281,7 +283,7 @@ void initAndRunBenchmarks(int argc, char** argv) {
       if(buildsize > probesize) {
         continue;
       }
-      for(auto numPartitions : std::vector<size_t>{1, 2, 5, 10, 20, 50, 100}) {
+      for(auto numPartitions : std::vector<size_t>{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}) {
         RegisterBOSSTest("RadixJoin", runRadixJoin, buildsize, probesize, numPartitions, false,
                          false, false);
         RegisterBOSSTest("RadixJoin", runRadixJoin, buildsize, probesize, numPartitions, false,
@@ -292,8 +294,8 @@ void initAndRunBenchmarks(int argc, char** argv) {
                          false);
         RegisterBOSSTest("RadixJoin", runRadixJoin, buildsize, probesize, numPartitions, false,
                          false, true);
-        RegisterBOSSTest("RadixJoin", runRadixJoin, buildsize, probesize, numPartitions, true, false,
-                         true);
+        RegisterBOSSTest("RadixJoin", runRadixJoin, buildsize, probesize, numPartitions, true,
+                         false, true);
       }
     }
   }
