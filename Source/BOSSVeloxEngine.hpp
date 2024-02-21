@@ -36,6 +36,7 @@ namespace boss::engines::velox {
 
         int32_t maxThreads = 1;
         int32_t numSplits = 64;
+        bool hashAdaptivityEnabled = true;
     };
 
 } // namespace boss::engines::velox

@@ -49,7 +49,7 @@ static auto& librariesToTest() {
 };
 
 void runRadixJoin(benchmark::State& state, size_t buildsize, size_t probesize, size_t numPartitions,
-                  bool useDictionary, bool useUnion, bool multithreaded) {
+                  bool hashAdaptivity, bool useDictionary, bool useUnion, bool multithreaded) {
   auto eval = [](auto&& expression) {
     boss::expressions::ExpressionSpanArguments spans;
     spans.emplace_back(boss::expressions::Span<std::string>(librariesToTest()));
@@ -70,6 +70,8 @@ void runRadixJoin(benchmark::State& state, size_t buildsize, size_t probesize, s
     std::cout << "Error: " << utilities::injectDebugInfoToSpans(std::move(result)) << std::endl;
     return true;
   };
+
+  eval("Set"_("HashAdaptivityEnabled"_, hashAdaptivity));
 
   eval("Set"_("MaxDrivers"_, (int32_t)1));
 
@@ -264,17 +266,19 @@ void RegisterTest(std::string const& name, Func&& func, float scaleFactor,
 
 template <typename Func>
 void RegisterBOSSTest(std::string const& name, Func&& func, size_t buildsize, size_t probesize,
-                      size_t numPartitions, bool useDictionary, bool useUnion, bool multithreaded) {
+                      size_t numPartitions, bool hashAdaptivity, bool useDictionary, bool useUnion,
+                      bool multithreaded) {
   std::ostringstream testName;
   testName << name;
   testName << "/buildsize:" << buildsize;
   testName << "/probesize:" << probesize;
   testName << "/Parts:" << numPartitions;
+  testName << "/analyze:" << (int)hashAdaptivity;
   testName << "/dict:" << (int)useDictionary;
   testName << "/union:" << (int)useUnion;
   testName << "/mt:" << (int)multithreaded;
   RegisterBenchmarkNolint(testName.str().c_str(), func, buildsize, probesize, numPartitions,
-                          useDictionary, useUnion, multithreaded);
+                          hashAdaptivity, useDictionary, useUnion, multithreaded);
 }
 
 void initAndRunBenchmarks(int argc, char** argv) {
@@ -284,18 +288,19 @@ void initAndRunBenchmarks(int argc, char** argv) {
         continue;
       }
       for(auto numPartitions : std::vector<size_t>{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}) {
-        RegisterBOSSTest("RadixJoin", runRadixJoin, buildsize, probesize, numPartitions, false,
-                         false, false);
-        RegisterBOSSTest("RadixJoin", runRadixJoin, buildsize, probesize, numPartitions, false,
-                         true, false);
-        RegisterBOSSTest("RadixJoin", runRadixJoin, buildsize, probesize, numPartitions, true,
-                         false, false);
-        RegisterBOSSTest("RadixJoin", runRadixJoin, buildsize, probesize, numPartitions, true, true,
-                         false);
-        RegisterBOSSTest("RadixJoin", runRadixJoin, buildsize, probesize, numPartitions, false,
-                         false, true);
-        RegisterBOSSTest("RadixJoin", runRadixJoin, buildsize, probesize, numPartitions, true,
-                         false, true);
+        for(bool hashAdaptivity : std::vector<bool>{false, true}) {
+          for(bool useDictionary : std::vector<bool>{false, true}) {
+            for(bool useUnion : std::vector<bool>{false, true}) {
+              for(bool multithreaded : std::vector<bool>{false, true}) {
+                if(multithreaded && useUnion) {
+                  continue;
+                }
+                RegisterBOSSTest("RadixJoin", runRadixJoin, buildsize, probesize, numPartitions,
+                                 hashAdaptivity, useDictionary, useUnion, multithreaded);
+              }
+            }
+          }
+        }
       }
     }
   }

@@ -393,6 +393,9 @@ namespace boss::engines::velox {
         if(std::get<Symbol>(e.getDynamicArguments()[0]) == "NumSplits"_) {
           numSplits = std::get<int32_t>(e.getDynamicArguments()[1]);
         }
+        if(std::get<Symbol>(e.getDynamicArguments()[0]) == "HashAdaptivityEnabled"_) {
+          hashAdaptivityEnabled = std::get<bool>(e.getDynamicArguments()[1]);
+        }
         return true;
       }
 
@@ -406,7 +409,10 @@ namespace boss::engines::velox {
       }
 
       auto params = std::make_unique<CursorParameters>();
-      params->queryCtx = std::make_shared<core::QueryCtx>(/*executor.get()*/);
+      params->queryCtx = std::make_shared<core::QueryCtx>(nullptr,
+           core::QueryConfig{std::unordered_map<std::string, std::string>{
+                       {core::QueryConfig::kHashAdaptivityEnabled,
+                        hashAdaptivityEnabled ? "true" : "false"}}});
       std::unique_ptr<TaskCursor> cursor;
 
       boss::expressions::ExpressionArguments columns;
