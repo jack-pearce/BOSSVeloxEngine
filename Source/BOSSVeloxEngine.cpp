@@ -409,10 +409,19 @@ namespace boss::engines::velox {
       }
 
       auto params = std::make_unique<CursorParameters>();
-      params->queryCtx = std::make_shared<core::QueryCtx>(nullptr,
-           core::QueryConfig{std::unordered_map<std::string, std::string>{
-                       {core::QueryConfig::kHashAdaptivityEnabled,
-                        hashAdaptivityEnabled ? "true" : "false"}}});
+      params->maxDrivers = maxThreads;
+      params->copyResult = false;
+      std::shared_ptr<folly::Executor> executor = nullptr;
+      if(maxThreads < 2) {
+        params->singleThreaded = true;
+      } else {
+        executor = std::make_shared<folly::CPUThreadPoolExecutor>(
+            std::thread::hardware_concurrency());
+      }
+      params->queryCtx = std::make_shared<core::QueryCtx>(
+          executor.get(), core::QueryConfig{std::unordered_map<std::string, std::string>{
+                               {core::QueryConfig::kHashAdaptivityEnabled,
+                                hashAdaptivityEnabled ? "true" : "false"}}});
       std::unique_ptr<TaskCursor> cursor;
 
       boss::expressions::ExpressionArguments columns;
@@ -423,13 +432,7 @@ namespace boss::engines::velox {
           queryBuilder.getFileColumnNamesMap();
           queryBuilder.reformVeloxExpr();
           std::vector<core::PlanNodeId> scanIds;
-          auto planPtr = queryBuilder.getVeloxPlanBuilder(scanIds);
-          params->planNode = planPtr;
-          params->maxDrivers = maxThreads;
-          if(maxThreads < 2) {
-            params->singleThreaded = true;
-          }
-          params->copyResult = false;
+          params->planNode = queryBuilder.getVeloxPlanBuilder(scanIds);
           auto results = veloxRunQueryParallel(*params, cursor, scanIds, numSplits);
           if(!cursor) {
             throw std::runtime_error("Query terminated with error");
@@ -445,14 +448,18 @@ namespace boss::engines::velox {
             for(auto& result : results) {
               // make sure that lazy vectors are computed
               result->loadedVector();
+              // copy the result such that it is own by *OUR* memory pool
+              // (this also ensure to flatten vectors wrapped in a dictionary)
+              auto copy =
+                  BaseVector::create<RowVector>(result->type(), result->size(), pool.get());
+              copy->copy(result.get(), 0, 0, result->size());
+              result = std::move(copy);
             }
             auto const& rowType = dynamic_cast<const RowType*>(results[0]->type().get());
             for(int i = 0; i < results[0]->childrenSize(); ++i) {
               ExpressionSpanArguments spans;
               for(auto& result : results) {
-                auto& vec = result->childAt(i);
-                BaseVector::flattenVector(vec); // flatten dictionaries
-                spans.emplace_back(veloxtoSpan(vec));
+                spans.emplace_back(veloxtoSpan(result->childAt(i)));
               }
               auto const& name = rowType->nameOf(i);
 #ifdef USE_NEW_TABLE_FORMAT
