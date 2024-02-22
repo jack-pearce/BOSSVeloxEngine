@@ -75,10 +75,10 @@ void runRadixJoin(benchmark::State& state, size_t buildsize, size_t probesize, s
 
   eval("Set"_("MaxDrivers"_, (int32_t)1));
 
-  eval("Set"_("NumSplits"_, (int32_t)(1000 / numPartitions)));
+  eval("Set"_("NumSplits"_, (int32_t)(10000 / numPartitions)));
+  // eval("Set"_("NumSplits"_, (int32_t)0)); // set to 0 to keep the original partitioning
 
-  eval("Set"_("BatchSize"_, (int32_t)1024)); // ideally should set this instead of numSplits
-                                             // not implemented yet
+  static const int32_t batchSize = 1024;
 
   auto custDatasize = probesize;
   auto orderDatasize = buildsize;
@@ -182,7 +182,7 @@ void runRadixJoin(benchmark::State& state, size_t buildsize, size_t probesize, s
                   "O_CUSTKEY"_, "O_SHIPPRIORITY"_, "O_SHIPPRIORITY"_)));
       } else {
         joins.emplace_back(
-            "Project"_("Join"_(std::move(filteredCustomer), std::move(filteredOrders),
+            "Project"_("Join"_(std::move(filteredOrders), std::move(filteredCustomer),
                                "Where"_("Equal"_("C_CUSTKEY"_, "O_CUSTKEY"_))),
                        "As"_("O_ORDERKEY"_, "O_ORDERKEY"_, "O_ORDERDATE"_, "O_ORDERDATE"_,
                              "O_CUSTKEY"_, "O_CUSTKEY"_, "O_SHIPPRIORITY"_, "O_SHIPPRIORITY"_)));
@@ -287,11 +287,12 @@ void initAndRunBenchmarks(int argc, char** argv) {
       if(buildsize > probesize) {
         continue;
       }
-      for(auto numPartitions : std::vector<size_t>{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}) {
-        for(bool hashAdaptivity : std::vector<bool>{false, true}) {
-          for(bool useDictionary : std::vector<bool>{false, true}) {
-            for(bool useUnion : std::vector<bool>{false, true}) {
-              for(bool multithreaded : std::vector<bool>{false, true}) {
+      for(bool hashAdaptivity : std::vector<bool>{false, true}) {
+        for(bool useDictionary : std::vector<bool>{false, true}) {
+          for(bool useUnion : std::vector<bool>{false, true}) {
+            for(bool multithreaded : std::vector<bool>{false, true}) {
+              for(auto numPartitions :
+                  std::vector<size_t>{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}) {
                 if(multithreaded && useUnion) {
                   continue;
                 }
@@ -322,10 +323,13 @@ int main(int argc, char** argv) {
     initAndRunBenchmarks(argc, argv);
   } catch(std::exception& e) {
     std::cerr << "caught exception in main: " << e.what() << std::endl;
+    boss::evaluate("ResetEngines"_());
     return EXIT_FAILURE;
   } catch(...) {
     std::cerr << "unhandled exception." << std::endl;
+    boss::evaluate("ResetEngines"_());
     return EXIT_FAILURE;
   }
+  boss::evaluate("ResetEngines"_());
   return EXIT_SUCCESS;
 }
