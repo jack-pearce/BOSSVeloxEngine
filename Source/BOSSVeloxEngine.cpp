@@ -399,19 +399,20 @@ namespace boss::engines::velox {
         return true;
       }
 
-      auto pool = memory::MemoryManager::getInstance()->addLeafPool();
-
-      {
-        static std::mutex m;
+      static std::mutex m;
+      auto pool = [this]() -> std::shared_ptr<memory::MemoryPool> {
         std::lock_guard const lock(m);
-        pools_.push_back(pool); // TODO: ideally handle lifetime through the spans
-                                // (i.e. destroy once no span refers to it)
-      }
+        auto& threadPool = threadPools_[std::this_thread::get_id()];
+        if(!threadPool) {
+          threadPool = memory::MemoryManager::getInstance()->addLeafPool();
+        }
+        return threadPool;
+      }();
 
       auto params = std::make_unique<CursorParameters>();
       params->maxDrivers = maxThreads;
       params->copyResult = false;
-      std::shared_ptr<folly::Executor> executor = nullptr;
+      std::shared_ptr<folly::Executor> executor;
       if(maxThreads < 2) {
         params->singleThreaded = true;
       } else {
