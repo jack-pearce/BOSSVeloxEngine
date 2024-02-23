@@ -429,9 +429,9 @@ namespace boss::engines::velox {
       params->maxDrivers = maxThreads;
       params->copyResult = false;
       std::shared_ptr<folly::Executor> executor;
-      if(maxThreads < 2) {
+      /*if(maxThreads < 2) {
         params->singleThreaded = true;
-      } else {
+      } else*/ {
         executor = std::make_shared<folly::CPUThreadPoolExecutor>(
             std::thread::hardware_concurrency());
       }
