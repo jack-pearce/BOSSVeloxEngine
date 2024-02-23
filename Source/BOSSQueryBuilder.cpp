@@ -177,8 +177,9 @@ namespace boss::engines::velox {
     // "Value"_("List"_(0.1, 10.0, 5.2))))
     std::unordered_map<std::string, TypePtr>
     getColumns(ComplexExpression&& expression, std::vector<BufferPtr> const& indicesVec,
-               std::vector<RowVectorPtr>& rowDataVec, RowTypePtr& tableSchema,
-               std::vector<size_t>& spanRowCountVec, memory::MemoryPool* pool) {
+               size_t indicesColumnEndIndex, std::vector<RowVectorPtr>& rowDataVec,
+               RowTypePtr& tableSchema, std::vector<size_t>& spanRowCountVec,
+               memory::MemoryPool* pool) {
       ExpressionArguments columns = std::move(expression).getArguments();
       std::vector<std::string> colNameVec;
       std::vector<std::shared_ptr<const Type>> colTypeVec;
@@ -188,7 +189,7 @@ namespace boss::engines::velox {
       std::for_each(
           std::make_move_iterator(columns.begin()), std::make_move_iterator(columns.end()),
           [&colNameVec, &colTypeVec, &colDataListVec, pool, &fileColumnNamesMap,
-           &indicesVec](auto&& columnExpr) {
+           &indicesVec, &indicesColumnEndIndex](auto&& columnExpr) {
             auto column = get<ComplexExpression>(std::forward<decltype(columnExpr)>(columnExpr));
             auto [head, unused_, dynamics, spans] = std::move(column).decompose();
 
@@ -211,11 +212,11 @@ namespace boss::engines::velox {
             std::vector<VectorPtr> colDataVec;
             for(auto& subSpan : listSpans) {
               BufferPtr indices = nullptr;
-              if(!indicesVec.empty()) {
+              if(!indicesVec.empty() && colNameVec.size() < indicesColumnEndIndex) {
                 indices = indicesVec[numSpan++];
               }
               VectorPtr subColData = std::visit(
-                  [pool, indices, columnName]<typename T>(boss::Span<T>&& typedSpan) -> VectorPtr {
+                  [pool, &indices, &columnName]<typename T>(boss::Span<T>&& typedSpan) -> VectorPtr {
                     if constexpr(std::is_same_v<T, int32_t> || std::is_same_v<T, int64_t> ||
                                  std::is_same_v<T, double_t>) {
                       return spanToVelox<T>(std::move(typedSpan), pool, indices);
@@ -254,14 +255,19 @@ namespace boss::engines::velox {
     }
 
     void QueryBuilder::getTableMeta(ComplexExpression&& expression) {
+      // temp workaround: we lost the indices when curVeloxExpr is cleared
+      // (because they are set before the table is parsed)
+      auto indicesVec = curVeloxExpr.indicesVec;
+      auto indicesColumnEndIndex = curVeloxExpr.indicesColumnEndIndex;
+
       if(!curVeloxExpr.tableName.empty()) {
         veloxExprList.push_back(curVeloxExpr);
         curVeloxExpr.clear();
       }
       curVeloxExpr.tableName = fmt::format("Table{}", tableCnt++); // indicate table names
-      curVeloxExpr.fileColumnNamesMap =
-          getColumns(std::move(expression), curVeloxExpr.indicesVec, curVeloxExpr.rowDataVec,
-                     curVeloxExpr.tableSchema, curVeloxExpr.spanRowCountVec, &pool_);
+      curVeloxExpr.fileColumnNamesMap = getColumns(
+          std::move(expression), indicesVec, indicesColumnEndIndex,
+          curVeloxExpr.rowDataVec, curVeloxExpr.tableSchema, curVeloxExpr.spanRowCountVec, &pool_);
       // std::cout << curVeloxExpr.tableName << ":" << std::endl;
       /*auto inputSize =
           std::accumulate(curVeloxExpr.rowDataVec.begin(), curVeloxExpr.rowDataVec.end(), 0,

@@ -73,6 +73,7 @@ namespace boss::engines::velox {
         RowTypePtr tableSchema;
         std::unordered_map<std::string, TypePtr> fileColumnNamesMap;
         std::vector<BufferPtr> indicesVec;
+        size_t indicesColumnEndIndex;
         std::vector<int64_t> radixPartitions;
         std::vector<size_t> spanRowCountVec;
 

@@ -306,8 +306,28 @@ namespace boss::engines::velox {
 
                             if (headName == "Gather") {
                                 auto it_start = std::move_iterator(dynamics.begin());
+                                queryBuilder.curVeloxExpr.indicesColumnEndIndex = size_t(-1); // all columns
                                 queryBuilder.curVeloxExpr.indicesVec = getIndices(std::move(oldSpans));
                                 bossExprToVelox(std::move(*it_start), queryBuilder);
+                                return;
+                            }
+
+                            if (headName == "RadixPartition") {
+                                auto it = std::move_iterator(dynamics.begin());
+                                auto it_end = std::move_iterator(dynamics.end());
+                                auto table = std::get<ComplexExpression>(std::move(*it++));
+                                auto [tableHead, tableStatic, tableDyn, tableSpans] = std::move(table).decompose();
+                                // add the positions for the additional columns (i.e. not the key columns)
+                                queryBuilder.curVeloxExpr.indicesColumnEndIndex = tableDyn.size();
+                                queryBuilder.curVeloxExpr.indicesVec = getIndices(std::move(oldSpans));
+                                // add the key columns
+                                for(; it != it_end; ++it) {
+                                  tableDyn.emplace_back(std::move(*it));
+                                }
+                                // get table data
+                                bossExprToVelox(boss::ComplexExpression{std::move(tableHead), std::move(tableStatic),
+                                                                        std::move(tableDyn), std::move(tableSpans)},
+                                                queryBuilder);
                                 return;
                             }
 
@@ -315,25 +335,21 @@ namespace boss::engines::velox {
                             if(headName == "RadixPartitions") {
                               auto it = std::move_iterator(dynamics.begin());
                               auto it_end = std::move_iterator(dynamics.end());
-                              bossExprToVelox(std::move(*it++), queryBuilder);
+                              auto table = std::get<ComplexExpression>(std::move(*it++));
                               for(; it != it_end; ++it) {
                                 auto indices = getRadixPartition(std::move(*it));
                                 queryBuilder.curVeloxExpr.radixPartitions.emplace_back(
                                   std::accumulate(indices.begin(), indices.end(), 0,
                                         [](size_t total, auto const& indicesBufferPtr) {
-                                        //std::cout << "buffer size: "
-                                        //        << indicesBufferPtr->size()
-                                        //        << std::endl;
                                         return total + indicesBufferPtr->size() / sizeof(int32_t);
                                       }));
-                                //std::cout << "radixPartitions push "
-                                //          << queryBuilder.curVeloxExpr.radixPartitions.back()
-                                //          << std::endl;
+                                queryBuilder.curVeloxExpr.indicesColumnEndIndex = size_t(-1); // all columns
                                 queryBuilder.curVeloxExpr.indicesVec.insert(
                                     queryBuilder.curVeloxExpr.indicesVec.end(),
                                     std::move_iterator(indices.begin()),
                                     std::move_iterator(indices.end()));
                               }
+                              bossExprToVelox(std::move(table), queryBuilder);
                               return;
                             }
 #endif // SUPPORT_RADIX_JOINS
