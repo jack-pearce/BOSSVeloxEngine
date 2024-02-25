@@ -28,7 +28,6 @@ using namespace facebook::velox::exec::test;
 #include <vector>
 
 //#define DebugInfo
-//#define USE_NEW_TABLE_FORMAT
 
 using std::endl;
 using std::to_string;
@@ -480,7 +479,9 @@ namespace boss::engines::velox {
               }
               auto const& name = rowType->nameOf(i);
 #ifdef USE_NEW_TABLE_FORMAT
-              columns.emplace_back(ComplexExpression(Symbol(name), {}, {}, std::move(spans)));
+              boss::expressions::ExpressionArguments args;
+              args.emplace_back(ComplexExpression("List"_, {}, {}, std::move(spans)));
+              columns.emplace_back(ComplexExpression(Symbol(name), {}, std::move(args), {}));
 #else
               boss::expressions::ExpressionArguments args;
               args.emplace_back(Symbol(name));

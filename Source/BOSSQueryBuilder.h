@@ -4,6 +4,7 @@
 
 #define SUPPORT_RADIX_JOINS
 #define SUPPORT_NEW_NUM_SPLITS
+//#define USE_NEW_TABLE_FORMAT
 
 namespace boss::engines::velox {
 
