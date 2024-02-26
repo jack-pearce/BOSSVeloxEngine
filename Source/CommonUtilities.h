@@ -14,8 +14,8 @@ using boss::expressions::generic::isComplexExpression;
 
 namespace boss {
 using SpanInputs =
-    std::variant<std::vector<std::int32_t>, std::vector<std::int64_t>, std::vector<std::double_t>,
-                 std::vector<std::string>, std::vector<Symbol>>;
+    std::variant<std::vector<std::int32_t>, std::vector<std::int64_t>, std::vector<std::float_t>,
+                 std::vector<std::double_t>, std::vector<std::string>, std::vector<Symbol>>;
 } // namespace boss
 
 namespace boss::engines::velox {
@@ -45,6 +45,9 @@ static ExpressionSpanArgument veloxtoSpan(VectorPtr const& vec) {
   if(vec->typeKind() == TypeKind::BIGINT) {
     return createBossSpan<int64_t>(vec);
   }
+  if(vec->typeKind() == TypeKind::REAL) {
+    return createBossSpan<float_t>(vec);
+  }
   if(vec->typeKind() == TypeKind::DOUBLE) {
     return createBossSpan<double_t>(vec);
   }
@@ -70,11 +73,13 @@ VectorPtr spanToVelox(boss::Span<T>&& span, memory::MemoryPool* pool, BufferPtr 
     return createDictVector(indices, flatVecPtr);
   };
 
-  if constexpr(std::is_same_v<T, int32_t>) {
+  if constexpr(std::is_same_v<T, int32_t> || std::is_same_v<T, int32_t const>) {
     return createVeloxVector(BossType::bINTEGER);
-  } else if constexpr(std::is_same_v<T, int64_t>) {
+  } else if constexpr(std::is_same_v<T, int64_t> || std::is_same_v<T, int64_t const>) {
     return createVeloxVector(BossType::bBIGINT);
-  } else if constexpr(std::is_same_v<T, double_t>) {
+  } else if constexpr(std::is_same_v<T, float_t> || std::is_same_v<T, float_t const>) {
+    return createVeloxVector(BossType::bREAL);
+  } else if constexpr(std::is_same_v<T, double_t> || std::is_same_v<T, double_t const>) {
     return createVeloxVector(BossType::bDOUBLE);
   }
 }

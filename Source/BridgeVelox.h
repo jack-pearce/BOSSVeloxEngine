@@ -16,18 +16,16 @@ using namespace facebook::velox::exec::test;
 namespace boss::engines::velox {
     const std::string kBossConnectorId = "test-boss";
     using ExpressionSpanArgument = boss::expressions::ExpressionSpanArgument;
-/**
-     int = 0, long = 1, double = 2
-**/
 
     enum BossType {
         bINTEGER = 0,
         bBIGINT,
+        bREAL,
         bDOUBLE
     };
 
     struct BossArray {
-        explicit BossArray(int64_t span_size, void *span_begin, ExpressionSpanArgument &&span)
+        explicit BossArray(int64_t span_size, void const* span_begin, ExpressionSpanArgument &&span)
                 : length(span_size),
                   buffers(span_begin),
                   holdSpan(std::move(span)) {
@@ -43,7 +41,7 @@ namespace boss::engines::velox {
 
         ExpressionSpanArgument holdSpan{};
         int64_t length;
-        const void *buffers;
+        void const* buffers;
     };
 
     VectorPtr importFromBossAsOwner(BossType bossType, BossArray &bossArray, memory::MemoryPool *pool);

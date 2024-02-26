@@ -64,15 +64,15 @@ namespace boss::engines::velox {
     }
 
     TypePtr importFromBossType(BossType &bossType) {
-        switch (bossType) {
-            case 0:
-                return INTEGER();
-            case 1:
-                return BIGINT();
-            case 2:
-                return DOUBLE();
-            default:
-                break;
+        switch(bossType) {
+          case boss::engines::velox::bINTEGER:
+            return INTEGER();
+          case boss::engines::velox::bBIGINT:
+            return BIGINT();
+          case boss::engines::velox::bREAL:
+            return REAL();
+          case boss::engines::velox::bDOUBLE:
+            return DOUBLE();
         }
         VELOX_USER_FAIL(
                 "Unable to convert '{}' BossType format type to Velox.", bossType)
@@ -207,6 +207,9 @@ auto fmt::formatter<boss::engines::velox::BossType>::format(boss::engines::velox
     break;
   case boss::engines::velox::bBIGINT:
     name = "bBIGINT";
+    break;
+  case boss::engines::velox::bREAL:
+    name = "bREAL";
     break;
   case boss::engines::velox::bDOUBLE:
     name = "bDOUBLE";

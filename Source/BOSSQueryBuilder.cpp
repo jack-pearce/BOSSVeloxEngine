@@ -218,11 +218,12 @@ namespace boss::engines::velox {
               VectorPtr subColData = std::visit(
                   [pool, &indices, &columnName]<typename T>(boss::Span<T>&& typedSpan) -> VectorPtr {
                     if constexpr(std::is_same_v<T, int32_t> || std::is_same_v<T, int64_t> ||
-                                 std::is_same_v<T, double_t>) {
+                                 std::is_same_v<T, double_t> || std::is_same_v<T, int32_t const> ||
+                                 std::is_same_v<T, int64_t const> || std::is_same_v<T, double_t const>) {
                       return spanToVelox<T>(std::move(typedSpan), pool, indices);
                     } else {
-                      throw std::runtime_error("unsupported column type in Select: " + columnName +
-                                               " with type: " + std::string(typeid(T).name()));
+                      throw std::runtime_error("unsupported column type: '" + columnName +
+                          "' with type: " + std::string(typeid(decltype(typedSpan)).name()));
                     }
                   },
                   std::move(subSpan));
