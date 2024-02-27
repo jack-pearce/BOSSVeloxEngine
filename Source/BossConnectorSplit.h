@@ -7,13 +7,9 @@ using namespace facebook::velox;
 namespace boss::engines::velox {
 
 struct BossConnectorSplit : public connector::ConnectorSplit {
-  explicit BossConnectorSplit(
-      const std::string& connectorId,
-      size_t totalParts = 1,
-      size_t partNumber = 0)
-      : ConnectorSplit(connectorId),
-        totalParts(totalParts),
-        partNumber(partNumber) {
+  explicit BossConnectorSplit(const std::string& connectorId, size_t totalParts = 1,
+                              size_t partNumber = 0)
+      : ConnectorSplit(connectorId), totalParts(totalParts), partNumber(partNumber) {
     VELOX_CHECK_GE(totalParts, 1, "totalParts must be >= 1");
     VELOX_CHECK_GT(totalParts, partNumber, "totalParts must be > partNumber");
   }

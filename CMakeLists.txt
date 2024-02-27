@@ -87,7 +87,7 @@ link_directories(${BOSSVeloxEngine_BINARY_DIR}/deps/lib)
 
 #################################### VeloxEngine Plugin ####################################
 
-set(ImplementationFiles Source/BOSSVeloxEngine.cpp Source/BOSSQueryBuilder.cpp Source/BridgeVelox.cpp Source/BossConnector.cpp
+set(ImplementationFiles Source/BOSSVeloxEngine.cpp Source/BridgeVelox.cpp Source/BossConnector.cpp
         ${VELOX_DIRS}/velox/exec/tests/utils/PlanBuilder.cpp
         ${VELOX_DIRS}/velox/exec/tests/utils/Cursor.cpp)
 

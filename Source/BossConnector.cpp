@@ -1,6 +1,8 @@
 #include "BossConnector.h"
 
-using namespace facebook::velox::exec::test;
+#ifdef DebugInfo
+  #include <iostream>
+#endif // DebugInfo
 
 namespace boss::engines::velox {
 
@@ -84,7 +86,7 @@ void BossDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
     std::cout << "totalParts_ " << totalParts_ << std::endl;
     std::cout << "subParts_ " << subParts_ << std::endl;
     std::cout << "partSize_ " << partSize_ << std::endl;
-#endif
+#endif // DebugInfo
     firstAddSplit_ = true;
   }
 
