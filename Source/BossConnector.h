@@ -26,24 +26,24 @@ private:
 // TPC-H table handle uses the underlying enum to describe the target table.
 class BossTableHandle : public ConnectorTableHandle {
 public:
-  explicit BossTableHandle(std::string connectorId, std::string tableName,
-                           const RowTypePtr bossTableSchema, std::vector<RowVectorPtr> rowDataVec,
-                           std::vector<size_t> bossSpanRowCountVec)
-      : ConnectorTableHandle(std::move(connectorId)), tableName_(tableName),
-        tableSchema_(bossTableSchema), rowDataVec_(std::move(rowDataVec)),
+  explicit BossTableHandle(std::string const& connectorId, std::string&& tableName,
+                           RowTypePtr&& bossTableSchema, std::vector<RowVectorPtr>&& rowDataVec,
+                           std::vector<size_t>&& bossSpanRowCountVec)
+      : ConnectorTableHandle(connectorId), tableName_(std::move(tableName)),
+        tableSchema_(std::move(bossTableSchema)), rowDataVec_(std::move(rowDataVec)),
         spanRowCountVec_(std::move(bossSpanRowCountVec)) {}
 
   ~BossTableHandle() override {}
 
   std::string toString() const override;
 
-  std::string getTable() const { return tableName_; }
+  std::string const& getTable() const& { return tableName_; }
 
-  RowTypePtr getTableSchema() const { return tableSchema_; }
+  RowTypePtr getTableSchema() const& { return tableSchema_; }
 
-  std::vector<RowVectorPtr> getRowDataVec() const { return std::move(rowDataVec_); }
+  std::vector<RowVectorPtr> const& getRowDataVec() const { return rowDataVec_; }
 
-  std::vector<size_t> getSpanRowCountVec() const { return std::move(spanRowCountVec_); }
+  std::vector<size_t> const& getSpanRowCountVec() const { return spanRowCountVec_; }
 
 private:
   std::string tableName_;
@@ -54,16 +54,16 @@ private:
 
 class BossDataSource : public DataSource {
 public:
-  BossDataSource(const std::shared_ptr<const RowType>& outputType,
-                 const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle,
-                 const std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>&
+  BossDataSource(std::shared_ptr<RowType const> const& outputType,
+                 std::shared_ptr<connector::ConnectorTableHandle> const& tableHandle,
+                 std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>> const&
                      columnHandles,
                  memory::MemoryPool* FOLLY_NONNULL pool);
 
   void addSplit(std::shared_ptr<ConnectorSplit> split) override;
 
   void addDynamicFilter(column_index_t /*outputChannel*/,
-                        const std::shared_ptr<common::Filter>& /*filter*/) override {
+                        std::shared_ptr<common::Filter> const& /*filter*/) override {
     VELOX_NYI("Dynamic filters not supported by BossConnector.");
   }
 
@@ -81,10 +81,11 @@ public:
 private:
   RowVectorPtr getBossData(uint64_t length);
 
-  std::string bossTableName_;
-  std::vector<RowVectorPtr> bossRowDataVec_;
-  std::vector<size_t> bossSpanRowCountVec_;
-  RowTypePtr outputType_;
+  RowTypePtr const& outputType_;
+  std::shared_ptr<BossTableHandle> bossTableHandle_;
+  std::string const& bossTableName_;
+  std::vector<RowVectorPtr> const& bossRowDataVec_;
+  std::vector<size_t> const& bossSpanRowCountVec_;
 
   // Mapping between output columns and their indices (column_index_t) in the datasets.
   std::vector<column_index_t> outputColumnMappings_;
@@ -96,10 +97,6 @@ private:
   uint64_t splitOffset_{0};
   uint64_t splitEnd_{0};
   size_t spanCountIdx_{0};
-  bool firstAddSplit_{false};
-  size_t totalParts_{0};
-  size_t subParts_{0};
-  uint64_t partSize_{0};
 
   size_t completedRows_{0};
   size_t completedBytes_{0};
@@ -109,14 +106,14 @@ private:
 
 class BossConnector final : public Connector {
 public:
-  BossConnector(const std::string& id, std::shared_ptr<const Config> properties,
+  BossConnector(std::string const& id, std::shared_ptr<const Config> properties,
                 folly::Executor* FOLLY_NULLABLE /*executor*/)
       : Connector(id) {}
 
   std::unique_ptr<DataSource>
-  createDataSource(const std::shared_ptr<const RowType>& outputType,
-                   const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle,
-                   const std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>&
+  createDataSource(std::shared_ptr<const RowType> const& outputType,
+                   std::shared_ptr<connector::ConnectorTableHandle> const& tableHandle,
+                   std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>> const&
                        columnHandles,
                    ConnectorQueryCtx* FOLLY_NONNULL connectorQueryCtx) override final {
     return std::make_unique<BossDataSource>(outputType, tableHandle, columnHandles,
@@ -134,15 +131,15 @@ public:
 
 class BossConnectorFactory : public ConnectorFactory {
 public:
-  static constexpr const char* FOLLY_NONNULL kBossConnectorName{"boss"};
+  static constexpr char const* FOLLY_NONNULL kBossConnectorName{"boss"};
 
   BossConnectorFactory() : ConnectorFactory(kBossConnectorName) {}
 
-  explicit BossConnectorFactory(const char* FOLLY_NONNULL connectorName)
+  explicit BossConnectorFactory(char const* FOLLY_NONNULL connectorName)
       : ConnectorFactory(connectorName) {}
 
   std::shared_ptr<Connector>
-  newConnector(const std::string& id, std::shared_ptr<const Config> properties,
+  newConnector(std::string const& id, std::shared_ptr<Config const> properties,
                folly::Executor* FOLLY_NULLABLE executor = nullptr) override {
     return std::make_shared<BossConnector>(id, properties, executor);
   }

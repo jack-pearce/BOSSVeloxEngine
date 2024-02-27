@@ -15,7 +15,6 @@ __declspec(dllexport) void reset();
 }
 #endif // _WIN32
 
-#define SUPPORT_NEW_NUM_SPLITS
 #define USE_NEW_TABLE_FORMAT
 
 // #define DebugInfo
@@ -45,7 +44,6 @@ private:
       threadPools_;
 
   int32_t maxThreads = 1;
-  int32_t numSplits = 1;
   bool hashAdaptivityEnabled = true;
 };
 

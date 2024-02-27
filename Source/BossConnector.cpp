@@ -1,8 +1,8 @@
 #include "BossConnector.h"
 
-#ifdef DebugInfo
-  #include <iostream>
-#endif // DebugInfo
+// #ifdef DebugInfo
+#include <iostream>
+// #endif // DebugInfo
 
 namespace boss::engines::velox {
 
@@ -11,23 +11,23 @@ std::string BossTableHandle::toString() const {
 }
 
 BossDataSource::BossDataSource(
-    const std::shared_ptr<const RowType>& outputType,
-    const std::shared_ptr<connector::ConnectorTableHandle>& tableHandle,
-    const std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>& columnHandles,
+    std::shared_ptr<RowType const> const& outputType,
+    std::shared_ptr<connector::ConnectorTableHandle> const& tableHandle,
+    std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>> const& columnHandles,
     memory::MemoryPool* FOLLY_NONNULL pool)
-    : pool_(pool) {
-  auto bossTableHandle = std::dynamic_pointer_cast<BossTableHandle>(tableHandle);
-  VELOX_CHECK_NOT_NULL(bossTableHandle, "TableHandle must be an instance of BossTableHandle");
-  bossTableName_ = bossTableHandle->getTable();
-  bossRowDataVec_ = bossTableHandle->getRowDataVec();
-  bossSpanRowCountVec_ = bossTableHandle->getSpanRowCountVec();
+    : pool_(pool), outputType_(outputType),
+      bossTableHandle_(std::dynamic_pointer_cast<BossTableHandle>(tableHandle)),
+      bossTableName_(bossTableHandle_->getTable()),
+      bossRowDataVec_(bossTableHandle_->getRowDataVec()),
+      bossSpanRowCountVec_(bossTableHandle_->getSpanRowCountVec()) {
+  VELOX_CHECK_NOT_NULL(bossTableHandle_, "TableHandle must be an instance of BossTableHandle");
 
-  auto bossTableSchema = bossTableHandle->getTableSchema();
+  auto const& bossTableSchema = bossTableHandle_->getTableSchema();
   VELOX_CHECK_NOT_NULL(bossTableSchema, "BossSchema can't be null.");
-  
+
   outputColumnMappings_.reserve(outputType->size());
 
-  for(const auto& outputName : outputType->names()) {
+  for(auto const& outputName : outputType->names()) {
     auto it = columnHandles.find(outputName);
     VELOX_CHECK(it != columnHandles.end(),
                 "ColumnHandle is missing for output column '{}' on table '{}'", outputName,
@@ -40,93 +40,43 @@ BossDataSource::BossDataSource(
                          handle->name(), bossTableName_);
 
     auto idx = bossTableSchema->getChildIdxIfExists(handle->name());
-    VELOX_CHECK(
-        idx != std::nullopt,
-        "Column '{}' not found on TPC-H table '{}'.",
-        handle->name(),
-        bossTableName_);
+    VELOX_CHECK(idx != std::nullopt, "Column '{}' not found on TPC-H table '{}'.", handle->name(),
+                bossTableName_);
     outputColumnMappings_.emplace_back(*idx);
   }
-  outputType_ = outputType;
 }
 
 void BossDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   VELOX_CHECK_NULL(currentSplit_,
-                 "Previous split has not been processed yet. Call next() to process the split.");
+                   "Previous split has not been processed yet. Call next() to process the split.");
   currentSplit_ = std::dynamic_pointer_cast<BossConnectorSplit>(split);
   VELOX_CHECK_NOT_NULL(currentSplit_, "Wrong type of split for BossDataSource.");
 
-  if(!firstAddSplit_) {
-#ifdef SUPPORT_NEW_NUM_SPLITS
-    if(currentSplit_->totalParts < bossSpanRowCountVec_.size()) {
-      totalParts_ = bossSpanRowCountVec_.size();
-    } else {
-      totalParts_ = currentSplit_->totalParts;
-      totalParts_ -= totalParts_ % bossSpanRowCountVec_.size();
-    }
-#else
-    totalParts_ = bossSpanRowCountVec_.size();
-    while(1) {
-      if(totalParts_ * 2 > currentSplit_->totalParts) {
-        break;
-      }
-      totalParts_ *= 2;
-    }
-#endif // SUPPORT_NEW_NUM_SPLITS
+  spanCountIdx_ = currentSplit_->partNumber;
+  splitOffset_ = 0;
+  splitEnd_ = bossSpanRowCountVec_.at(spanCountIdx_) - splitOffset_;
 
-    subParts_ = totalParts_ / bossSpanRowCountVec_.size();
-    partSize_ = std::ceil((double)bossSpanRowCountVec_.at(0) / (double)subParts_);
-    if(subParts_ > bossSpanRowCountVec_.at(0)) {
-      partSize_ = 1;
-      totalParts_ = std::accumulate(bossSpanRowCountVec_.begin(), bossSpanRowCountVec_.end(), 0);
-      subParts_ = bossSpanRowCountVec_.at(0);
-    }
 #ifdef DebugInfo
-    std::cout << "bossSpanRowCountVec_.size() " << bossSpanRowCountVec_.size() << std::endl;
-    std::cout << "totalParts_ " << totalParts_ << std::endl;
-    std::cout << "subParts_ " << subParts_ << std::endl;
-    std::cout << "partSize_ " << partSize_ << std::endl;
+  std::cout << "bossSpanRowCountVec_.size() " << bossSpanRowCountVec_.size() << std::endl;
+  std::cout << "spanCountIdx_ " << spanCountIdx_ << std::endl;
+  std::cout << "splitOffset_ " << splitOffset_ << std::endl;
+  std::cout << "splitEnd_ " << splitEnd_ << std::endl;
 #endif // DebugInfo
-    firstAddSplit_ = true;
-  }
-
-  // invalid split
-  if(currentSplit_->partNumber >= totalParts_) {
-    spanCountIdx_ = 0;
-    splitOffset_ = 0;
-    splitEnd_ = 0;
-    return;
-  }
-
-  spanCountIdx_ = currentSplit_->partNumber / subParts_;
-  assert(spanCountIdx_ < bossSpanRowCountVec_.size());
-  auto subPartIdx = currentSplit_->partNumber % subParts_;
-  splitOffset_ = subPartIdx * partSize_;
-  // invalid split
-  if(splitOffset_ >= bossSpanRowCountVec_.at(spanCountIdx_)) {
-    spanCountIdx_ = 0;
-    splitOffset_ = 0;
-    splitEnd_ = 0;
-    return;
-  }
-  splitEnd_ = splitOffset_ + partSize_;
-  if(splitEnd_ > bossSpanRowCountVec_.at(spanCountIdx_)) {
-    splitEnd_ = bossSpanRowCountVec_.at(spanCountIdx_);
-  }
 }
 
 RowVectorPtr BossDataSource::getBossData(uint64_t length) {
-  std::vector<VectorPtr> children;
-  children.reserve(outputColumnMappings_.size());
-
-  //std::cout << "getBossData: spanCountIdx_=" << spanCountIdx_ << " splitOffset_=" << splitOffset_
-  //          << " length=" << length << std::endl;
-
+#ifdef DebugInfo
+  std::cout << "getBossData: spanCountIdx_=" << spanCountIdx_ << " splitOffset_=" << splitOffset_
+            << " length=" << length << std::endl;
+#endif
   assert(splitOffset_ <= INT_MAX);
   assert(length <= INT_MAX);
-  for(const auto channel : outputColumnMappings_) {
+
+  std::vector<VectorPtr> children;
+  children.reserve(outputColumnMappings_.size());
+  for(auto channelIdx : outputColumnMappings_) {
     children.emplace_back(
-        bossRowDataVec_.at(spanCountIdx_)->childAt(channel)->slice(splitOffset_, length));
+        bossRowDataVec_.at(spanCountIdx_)->childAt(channelIdx)->slice(splitOffset_, length));
   }
 
   return std::make_shared<RowVector>(pool_, outputType_, BufferPtr(nullptr), length,
@@ -136,7 +86,7 @@ RowVectorPtr BossDataSource::getBossData(uint64_t length) {
 std::optional<RowVectorPtr> BossDataSource::next(uint64_t size, ContinueFuture& /*future*/) {
   VELOX_CHECK_NOT_NULL(currentSplit_, "No split to process. Call addSplit() first.");
 
-  auto maxRows = splitEnd_ - splitOffset_;
+  auto maxRows = std::min(size, (splitEnd_ - splitOffset_));
   auto outputVector = getBossData(maxRows);
 
   // If the split is exhausted.

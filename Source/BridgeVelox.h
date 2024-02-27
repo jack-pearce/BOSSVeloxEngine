@@ -13,7 +13,7 @@ using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 
 namespace boss::engines::velox {
-const std::string kBossConnectorId = "boss";
+std::string const kBossConnectorId = "boss";
 using ExpressionSpanArgument = boss::expressions::ExpressionSpanArgument;
 
 enum BossType { bINTEGER = 0, bBIGINT, bREAL, bDOUBLE };
@@ -39,12 +39,11 @@ VectorPtr importFromBossAsOwner(BossType bossType, BossArray& bossArray, memory:
 
 BufferPtr importFromBossAsOwnerBuffer(BossArray& bossArray);
 
-std::vector<RowVectorPtr> veloxRunQueryParallel(const CursorParameters& params,
-                                                std::unique_ptr<TaskCursor>& cursor,
-                                                std::vector<core::PlanNodeId> scanIds,
-                                                const int numSplits);
+std::vector<RowVectorPtr>
+veloxRunQueryParallel(CursorParameters const& params, std::unique_ptr<TaskCursor>& cursor,
+                      std::vector<std::pair<core::PlanNodeId, size_t>> const& scanIds);
 
-void veloxPrintResults(const std::vector<RowVectorPtr>& results);
+void veloxPrintResults(std::vector<RowVectorPtr> const& results);
 
 RowVectorPtr makeRowVectorNoCopy(std::vector<std::string> childNames,
                                  std::vector<VectorPtr> children, memory::MemoryPool* pool);

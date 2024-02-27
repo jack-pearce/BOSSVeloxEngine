@@ -65,11 +65,11 @@ using ExpressionSpanArgument = boss::expressions::ExpressionSpanArgument;
 using expressions::generic::ArgumentWrapper;
 using expressions::generic::ExpressionArgumentsWithAdditionalCustomAtomsWrapper;
 
-template <typename T> boss::Span<const T> createBossSpan(VectorPtr const& vec) {
+template <typename T> boss::Span<T const> createBossSpan(VectorPtr const& vec) {
   auto const* data = vec->values()->as<T>();
   auto length = vec->size();
   VectorPtr ptrCopy = vec;
-  return boss::Span<const T>(data, length, [v = std::move(ptrCopy)]() {});
+  return boss::Span<T const>(data, length, [v = std::move(ptrCopy)]() {});
 }
 
 static ExpressionSpanArgument veloxtoSpan(VectorPtr const& vec) {
@@ -118,7 +118,7 @@ VectorPtr spanToVelox(boss::Span<T>&& span, memory::MemoryPool* pool, BufferPtr 
   }
 }
 
-static int32_t dateToInt32(const std::string& str) {
+static int32_t dateToInt32(std::string const& str) {
   std::istringstream iss;
   iss.str(str);
   struct std::tm tm = {};
@@ -268,7 +268,7 @@ getColumns(ComplexExpression&& expression, memory::MemoryPool* pool) {
 
   ExpressionArguments columns = std::move(expression).getArguments();
   std::vector<std::string> colNameVec;
-  std::vector<std::shared_ptr<const Type>> colTypeVec;
+  std::vector<std::shared_ptr<Type const>> colTypeVec;
   std::vector<std::vector<VectorPtr>> colDataListVec;
 
   std::for_each(
@@ -303,8 +303,9 @@ getColumns(ComplexExpression&& expression, memory::MemoryPool* pool) {
           VectorPtr subColData = std::visit(
               [pool, &indices, &columnName]<typename T>(boss::Span<T>&& typedSpan) -> VectorPtr {
                 if constexpr(std::is_same_v<T, int32_t> || std::is_same_v<T, int64_t> ||
-                             std::is_same_v<T, double_t> || std::is_same_v<T, int32_t const> ||
-                             std::is_same_v<T, int64_t const> ||
+                             std::is_same_v<T, float_t> || std::is_same_v<T, double_t> ||
+                             std::is_same_v<T, int32_t const> || std::is_same_v<T, int64_t const> ||
+                             std::is_same_v<T, float_t const> ||
                              std::is_same_v<T, double_t const>) {
                   return spanToVelox<T>(std::move(typedSpan), pool, indices);
                 } else {
@@ -500,8 +501,9 @@ static std::vector<std::string> expressionToProjections(ComplexExpression&& e) {
 }
 
 static PlanBuilder buildOperatorPipeline(
-    ComplexExpression&& e, std::vector<core::PlanNodeId>& scanIds, memory::MemoryPool& pool,
-    std::shared_ptr<core::PlanNodeIdGenerator>& planNodeIdGenerator, int tableCnt) {
+    ComplexExpression&& e, std::vector<std::pair<core::PlanNodeId, size_t>>& scanIds,
+    memory::MemoryPool& pool, std::shared_ptr<core::PlanNodeIdGenerator>& planNodeIdGenerator,
+    int tableCnt) {
   if(e.getHead().getName() == "Table" || e.getHead().getName() == "Gather" ||
      e.getHead().getName() == "RadixPartition") {
     auto tableName = fmt::format("Table{}", tableCnt++);
@@ -518,15 +520,17 @@ static PlanBuilder buildOperatorPipeline(
     auto assignmentsMap = assignColumns(tableSchema->names());
 
     core::PlanNodeId scanId;
+    auto numSpans = spanRowCountVec.size();
     auto plan = PlanBuilder(planNodeIdGenerator)
                     .startTableScan()
                     .outputType(tableSchema)
                     .tableHandle(std::make_shared<BossTableHandle>(
-                        kBossConnectorId, tableName, tableSchema, rowDataVec, spanRowCountVec))
+                        kBossConnectorId, std::move(tableName), std::move(tableSchema),
+                        std::move(rowDataVec), std::move(spanRowCountVec)))
                     .assignments(assignmentsMap)
                     .endTableScan()
                     .capturePlanNodeId(scanId);
-    scanIds.emplace_back(scanId);
+    scanIds.emplace_back(scanId, numSpans);
     return std::move(plan);
   }
   if(e.getHead().getName() == "Project") {
@@ -559,7 +563,7 @@ static PlanBuilder buildOperatorPipeline(
     auto const& buildSideLayout = buildSideInputPlan.planNode()->outputType()->names();
     auto const& probeSideLayout = probeSideInputPlan.planNode()->outputType()->names();
     auto outputLayout = buildSideLayout;
-    outputLayout.insert(outputLayout.end(), probeSideLayout.begin(), probeSideLayout.end());    
+    outputLayout.insert(outputLayout.end(), probeSideLayout.begin(), probeSideLayout.end());
     return probeSideInputPlan.hashJoin(probeSideKeys, buildSideKeys, buildSideInputPlan.planNode(),
                                        "", outputLayout);
   }
@@ -598,11 +602,10 @@ static PlanBuilder buildOperatorPipeline(
   throw std::runtime_error("Unknown relational operator: " + e.getHead().getName());
 }
 
-#ifdef DebugInfo
-void veloxPrintResults(const std::vector<RowVectorPtr>& results) {
+void veloxPrintResults(std::vector<RowVectorPtr> const& results) {
   std::cout << "Results:" << std::endl;
   bool printType = true;
-  for(const auto& vector : results) {
+  for(auto const& vector : results) {
     // Print RowType only once.
     if(printType) {
       std::cout << vector->type()->asRow().toString() << std::endl;
@@ -613,7 +616,6 @@ void veloxPrintResults(const std::vector<RowVectorPtr>& results) {
     }
   }
 }
-#endif // DebugInfo
 
 boss::Expression Engine::evaluate(boss::Expression&& e) {
   if(std::holds_alternative<ComplexExpression>(e)) {
@@ -628,11 +630,6 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
       maxThreads = std::holds_alternative<int32_t>(e.getDynamicArguments()[1])
                        ? std::get<int32_t>(e.getDynamicArguments()[1])
                        : std::get<int64_t>(e.getDynamicArguments()[1]);
-    }
-    if(std::get<Symbol>(e.getDynamicArguments()[0]) == "NumSplits"_) {
-      numSplits = std::holds_alternative<int32_t>(e.getDynamicArguments()[1])
-                      ? std::get<int32_t>(e.getDynamicArguments()[1])
-                      : std::get<int64_t>(e.getDynamicArguments()[1]);
     }
     if(std::get<Symbol>(e.getDynamicArguments()[0]) == "HashAdaptivityEnabled"_) {
       hashAdaptivityEnabled = std::get<bool>(e.getDynamicArguments()[1]);
@@ -656,8 +653,7 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
   std::shared_ptr<folly::Executor> executor;
   if(maxThreads < 2) {
     params->singleThreaded = true;
-  } else
-  {
+  } else {
     executor = std::make_shared<folly::CPUThreadPoolExecutor>(std::thread::hardware_concurrency());
   }
   params->queryCtx = std::make_shared<core::QueryCtx>(
@@ -668,13 +664,13 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
 
   boss::expressions::ExpressionArguments columns;
   auto evalAndAddOutputSpans = [&, this](auto&& e) {
-    auto scanIds = std::vector<core::PlanNodeId>{};
+    auto scanIds = std::vector<std::pair<core::PlanNodeId, size_t>>{};
     auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
     int tableCnt = 0;
     auto plan = buildOperatorPipeline(std::move(e), scanIds, *pool, planNodeIdGenerator, tableCnt);
     params->planNode = plan.planNode();
 
-    auto results = veloxRunQueryParallel(*params, cursor, scanIds, numSplits);
+    auto results = veloxRunQueryParallel(*params, cursor, scanIds);
     if(!cursor) {
       throw std::runtime_error("Query terminated with error");
     }

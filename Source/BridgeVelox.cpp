@@ -27,7 +27,7 @@ struct BufferViewReleaser {
   void release() const {}
 
 private:
-  const std::shared_ptr<BossArray> arrayReleaser_;
+  std::shared_ptr<BossArray> const arrayReleaser_;
 };
 
 // Wraps a naked pointer using a Velox buffer view, without copying it. This
@@ -41,7 +41,7 @@ BufferPtr wrapInBufferViewAsOwner(const void* buffer, size_t length,
 
 // Dispatch based on the type.
 template <TypeKind kind>
-VectorPtr createFlatVector(memory::MemoryPool* pool, const TypePtr& type, BufferPtr nulls,
+VectorPtr createFlatVector(memory::MemoryPool* pool, TypePtr const& type, BufferPtr nulls,
                            size_t length, BufferPtr values) {
   using T = typename TypeTraits<kind>::NativeType;
   return std::make_shared<FlatVector<T>>(pool, type, nulls, length, values,
@@ -98,7 +98,7 @@ BufferPtr importFromBossAsOwnerBuffer(BossArray& bossArray) {
   ;
 }
 
-std::vector<RowVectorPtr> myReadCursor(const CursorParameters& params,
+std::vector<RowVectorPtr> myReadCursor(CursorParameters const& params,
                                        std::unique_ptr<TaskCursor>& cursor,
                                        std::function<void(exec::Task*)> addSplits) {
   cursor = TaskCursor::create(params);
@@ -116,18 +116,17 @@ std::vector<RowVectorPtr> myReadCursor(const CursorParameters& params,
   return std::move(result);
 }
 
-std::vector<RowVectorPtr> veloxRunQueryParallel(const CursorParameters& params,
-                                                std::unique_ptr<TaskCursor>& cursor,
-                                                std::vector<core::PlanNodeId> scanIds,
-                                                const int numSplits) {
+std::vector<RowVectorPtr>
+veloxRunQueryParallel(CursorParameters const& params, std::unique_ptr<TaskCursor>& cursor,
+                      std::vector<std::pair<core::PlanNodeId, size_t>> const& scanIds) {
   try {
     bool noMoreSplits = false;
     auto addSplits = [&](exec::Task* task) {
       if(!noMoreSplits) {
-        for(auto& scanId : scanIds) {
-          for(size_t i = 0; i < numSplits; ++i) {
+        for(auto const& [scanId, numSpans] : scanIds) {
+          for(size_t i = 0; i < numSpans; ++i) {
             task->addSplit(scanId, exec::Split(std::make_shared<BossConnectorSplit>(
-                                       kBossConnectorId, numSplits, i)));
+                                       kBossConnectorId, numSpans, i)));
           }
           task->noMoreSplits(scanId);
         }
@@ -136,7 +135,7 @@ std::vector<RowVectorPtr> veloxRunQueryParallel(const CursorParameters& params,
     };
     auto result = myReadCursor(params, cursor, addSplits);
     return result;
-  } catch(const std::exception& e) {
+  } catch(std::exception const& e) {
     LOG(ERROR) << "Query terminated with: " << e.what();
     return {};
   }
@@ -144,13 +143,13 @@ std::vector<RowVectorPtr> veloxRunQueryParallel(const CursorParameters& params,
 
 RowVectorPtr makeRowVectorNoCopy(std::vector<std::string> childNames,
                                  std::vector<VectorPtr> children, memory::MemoryPool* pool) {
-  std::vector<std::shared_ptr<const Type>> childTypes;
+  std::vector<std::shared_ptr<Type const>> childTypes;
   childTypes.resize(children.size());
   for(int i = 0; i < children.size(); i++) {
     childTypes[i] = children[i]->type();
   }
   auto rowType = ROW(std::move(childNames), std::move(childTypes));
-  const size_t vectorSize = children.empty() ? 0 : children.front()->size();
+  size_t const vectorSize = children.empty() ? 0 : children.front()->size();
 
   return std::make_shared<RowVector>(pool, rowType, BufferPtr(nullptr), vectorSize, children);
 }
