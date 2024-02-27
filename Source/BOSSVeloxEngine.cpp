@@ -502,7 +502,8 @@ static std::vector<std::string> expressionToProjections(ComplexExpression&& e) {
 static PlanBuilder buildOperatorPipeline(
     ComplexExpression&& e, std::vector<core::PlanNodeId>& scanIds, memory::MemoryPool& pool,
     std::shared_ptr<core::PlanNodeIdGenerator>& planNodeIdGenerator, int tableCnt) {
-  if(e.getHead().getName() == "Table") {
+  if(e.getHead().getName() == "Table" || e.getHead().getName() == "Gather" ||
+     e.getHead().getName() == "RadixPartition") {
     auto tableName = fmt::format("Table{}", tableCnt++);
     auto [rowDataVec, tableSchema, spanRowCountVec] = getColumns(std::move(std::move(e)), &pool);
 
