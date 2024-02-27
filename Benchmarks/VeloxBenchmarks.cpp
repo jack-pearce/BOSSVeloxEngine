@@ -165,37 +165,30 @@ void runRadixJoin(benchmark::State& state, size_t buildsize, size_t probesize, s
 
       auto filteredCustomer =
           useDictionary
-              ? "Table"_("Column"_("C_COLA"_, boss::ComplexExpression("List"_, {}, {},
-                                                                      std::move(custColASpans))),
-                         "Column"_("C_COLB"_, boss::ComplexExpression("List"_, {}, {},
-                                                                      std::move(custColBSpans))))
-              : "Table"_("Column"_("C_CUSTKEY"_, boss::ComplexExpression("List"_, {}, {},
-                                                                         std::move(custKeySpans))),
-                         "Column"_("C_COLA"_, boss::ComplexExpression("List"_, {}, {},
-                                                                      std::move(custColASpans))),
-                         "Column"_("C_COLB"_, boss::ComplexExpression("List"_, {}, {},
-                                                                      std::move(custColBSpans))));
+              ? "Table"_(
+                    "C_COLA"_(boss::ComplexExpression("List"_, {}, {}, std::move(custColASpans))),
+                    "C_COLB"_(boss::ComplexExpression("List"_, {}, {}, std::move(custColBSpans))))
+              : "Table"_(
+                    "C_CUSTKEY"_(boss::ComplexExpression("List"_, {}, {}, std::move(custKeySpans))),
+                    "C_COLA"_(boss::ComplexExpression("List"_, {}, {}, std::move(custColASpans))),
+                    "C_COLB"_(boss::ComplexExpression("List"_, {}, {}, std::move(custColBSpans))));
 
       auto filteredOrders =
           useDictionary
-              ? "Table"_(
-                    "Column"_("O_ORDERKEY"_,
-                              boss::ComplexExpression("List"_, {}, {}, std::move(orderKeySpans))),
-                    "Column"_("O_ORDERDATE"_,
-                              boss::ComplexExpression("List"_, {}, {}, std::move(orderDateSpans))),
-                    "Column"_(
-                        "O_SHIPPRIORITY"_,
-                        boss::ComplexExpression("List"_, {}, {}, std::move(oShipPrioritySpans))))
-              : "Table"_(
-                    "Column"_("O_ORDERKEY"_,
-                              boss::ComplexExpression("List"_, {}, {}, std::move(orderKeySpans))),
-                    "Column"_("O_ORDERDATE"_,
-                              boss::ComplexExpression("List"_, {}, {}, std::move(orderDateSpans))),
-                    "Column"_("O_CUSTKEY"_,
-                              boss::ComplexExpression("List"_, {}, {}, std::move(oCustkeySpans))),
-                    "Column"_(
-                        "O_SHIPPRIORITY"_,
-                        boss::ComplexExpression("List"_, {}, {}, std::move(oShipPrioritySpans))));
+              ? "Table"_("O_ORDERKEY"_(
+                             boss::ComplexExpression("List"_, {}, {}, std::move(orderKeySpans))),
+                         "O_ORDERDATE"_(
+                             boss::ComplexExpression("List"_, {}, {}, std::move(orderDateSpans))),
+                         "O_SHIPPRIORITY"_(boss::ComplexExpression("List"_, {}, {},
+                                                                   std::move(oShipPrioritySpans))))
+              : "Table"_("O_ORDERKEY"_(
+                             boss::ComplexExpression("List"_, {}, {}, std::move(orderKeySpans))),
+                         "O_ORDERDATE"_(
+                             boss::ComplexExpression("List"_, {}, {}, std::move(orderDateSpans))),
+                         "O_CUSTKEY"_(
+                             boss::ComplexExpression("List"_, {}, {}, std::move(oCustkeySpans))),
+                         "O_SHIPPRIORITY"_(boss::ComplexExpression("List"_, {}, {},
+                                                                   std::move(oShipPrioritySpans))));
 
       if(useDictionary) {
         auto custPositions = std::vector<int32_t>(custPartitionSize);
@@ -214,13 +207,13 @@ void runRadixJoin(benchmark::State& state, size_t buildsize, size_t probesize, s
 
         boss::expressions::ExpressionArguments custRadixPartitionArgs;
         custRadixPartitionArgs.emplace_back(std::move(filteredCustomer));
-        custRadixPartitionArgs.emplace_back("Column"_(
-            "C_CUSTKEY"_, boss::ComplexExpression("List"_, {}, {}, std::move(custKeySpans))));
+        custRadixPartitionArgs.emplace_back(
+            "C_CUSTKEY"_(boss::ComplexExpression("List"_, {}, {}, std::move(custKeySpans))));
 
         boss::expressions::ExpressionArguments orderRadixPartitionArgs;
         orderRadixPartitionArgs.emplace_back(std::move(filteredOrders));
-        orderRadixPartitionArgs.emplace_back("Column"_(
-            "O_CUSTKEY"_, boss::ComplexExpression("List"_, {}, {}, std::move(oCustkeySpans))));
+        orderRadixPartitionArgs.emplace_back(
+            "O_CUSTKEY"_(boss::ComplexExpression("List"_, {}, {}, std::move(oCustkeySpans))));
 
         joins.emplace_back("Project"_(
             "Join"_(

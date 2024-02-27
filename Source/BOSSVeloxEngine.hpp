@@ -16,7 +16,7 @@ __declspec(dllexport) void reset();
 #endif // _WIN32
 
 #define SUPPORT_NEW_NUM_SPLITS
-// #define USE_NEW_TABLE_FORMAT
+#define USE_NEW_TABLE_FORMAT
 
 // #define DebugInfo
 
