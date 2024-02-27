@@ -209,19 +209,20 @@ void runRadixJoin(benchmark::State& state, size_t buildsize, size_t probesize, s
         custRadixPartitionArgs.emplace_back(std::move(filteredCustomer));
         custRadixPartitionArgs.emplace_back(
             "C_CUSTKEY"_(boss::ComplexExpression("List"_, {}, {}, std::move(custKeySpans))));
+        custRadixPartitionArgs.emplace_back(
+            boss::ComplexExpression("Indexes"_, {}, {}, std::move(custPositionsSpans)));
 
         boss::expressions::ExpressionArguments orderRadixPartitionArgs;
         orderRadixPartitionArgs.emplace_back(std::move(filteredOrders));
         orderRadixPartitionArgs.emplace_back(
             "O_CUSTKEY"_(boss::ComplexExpression("List"_, {}, {}, std::move(oCustkeySpans))));
+        orderRadixPartitionArgs.emplace_back(
+            boss::ComplexExpression("Indexes"_, {}, {}, std::move(orderPositionsSpans)));
 
         joins.emplace_back("Project"_(
-            "Join"_(
-                boss::ComplexExpression("RadixPartition"_, {}, std::move(orderRadixPartitionArgs),
-                                        std::move(orderPositionsSpans)),
-                boss::ComplexExpression("RadixPartition"_, {}, std::move(custRadixPartitionArgs),
-                                        std::move(custPositionsSpans)),
-                "Where"_("Equal"_("O_CUSTKEY"_, "C_CUSTKEY"_))),
+            "Join"_(boss::ComplexExpression("RadixPartition"_, std::move(orderRadixPartitionArgs)),
+                    boss::ComplexExpression("RadixPartition"_, std::move(custRadixPartitionArgs)),
+                    "Where"_("Equal"_("O_CUSTKEY"_, "C_CUSTKEY"_))),
             "As"_("O_ORDERKEY"_, "O_ORDERKEY"_, "O_ORDERDATE"_, "O_ORDERDATE"_, "O_CUSTKEY"_,
                   "O_CUSTKEY"_, "O_SHIPPRIORITY"_, "O_SHIPPRIORITY"_)));
       } else {

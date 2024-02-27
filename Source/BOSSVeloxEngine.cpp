@@ -254,12 +254,21 @@ getColumns(ComplexExpression&& expression, memory::MemoryPool* pool) {
     auto it_end = std::move_iterator(dynamics.end());
     auto table = std::get<ComplexExpression>(std::move(*it++));
     auto [tableHead, tableStatic, tableDyn, tableSpans] = std::move(table).decompose();
-    // add the positions for the additional columns (i.e. not the key columns)
-    indicesColumnEndIndex = tableDyn.size();
-    indicesVec = getIndices(std::move(spans));
-    // add the key columns
+    indicesColumnEndIndex = tableDyn.size(); // indices don't apply to key columns
     for(; it != it_end; ++it) {
-      tableDyn.emplace_back(std::move(*it));
+      auto argExpr = get<ComplexExpression>(std::move(*it));
+      if(argExpr.getHead().getName() == "Indexes") {
+        // not a key column, these are the indices
+        assert(indicesVec.empty());
+        auto [unused0, unused1, unused2, indicesSpans] = std::move(argExpr).decompose();
+        indicesVec = getIndices(std::move(indicesSpans));
+        continue;
+      }
+      // add a key column
+      tableDyn.emplace_back(std::move(argExpr));
+    }
+    if(indicesVec.empty()) {
+      throw std::runtime_error("RadixPartition without Indexes");
     }
     // get table data
     expression = boss::ComplexExpression(std::move(tableHead), std::move(tableStatic),
