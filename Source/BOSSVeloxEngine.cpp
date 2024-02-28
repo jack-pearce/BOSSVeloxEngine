@@ -337,7 +337,7 @@ getColumns(ComplexExpression&& expression, memory::MemoryPool* pool) {
     for(auto i = 0; i < listSize; i++) {
       spanRowCountVec.push_back(colDataListVec[0][i]->size());
       std::vector<VectorPtr> rowData;
-      for(auto j = 0; j < columns.size(); j++) {
+      for(auto j = 0; j < colDataListVec.size(); j++) {
         assert(colDataListVec[j].size() == listSize);
         rowData.push_back(std::move(colDataListVec[j][i]));
       }
@@ -634,6 +634,10 @@ boss::Expression Engine::evaluate(boss::Expression&& e) {
 }
 
 boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
+  if(e.getHead().getName() == "ErrorWhenEvaluatingExpression") {
+    return std::move(e);
+  }
+
   if(e.getHead().getName() == "Set") {
     if(std::get<Symbol>(e.getDynamicArguments()[0]) == "maxThreads"_) {
       maxThreads = std::holds_alternative<int32_t>(e.getDynamicArguments()[1])
