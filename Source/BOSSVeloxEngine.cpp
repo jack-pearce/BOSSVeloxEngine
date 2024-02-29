@@ -711,15 +711,25 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
           spans.emplace_back(veloxtoSpan(result->childAt(i)));
         }
         auto const& name = rowType->nameOf(i);
+        auto listExpr = ComplexExpression{"List"_, {}, {}, std::move(spans)};
 #ifdef USE_NEW_TABLE_FORMAT
         boss::expressions::ExpressionArguments args;
-        args.emplace_back(ComplexExpression("List"_, {}, {}, std::move(spans)));
+        args.emplace_back(std::move(listExpr));
+        columns.emplace_back(ComplexExpression(Symbol{name}, {}, std::move(args), {}));
+#else
+        columns.emplace_back("Column"_(Symbol{name}, std::move(listExpr)));
+#endif // USE_NEW_TABLE_FORMAT
+      }
+    } else {
+      // empty result - at least return the empty columns
+      auto const& outputColumnNames = plan.planNode()->outputType()->names();
+      for(auto const& name : outputColumnNames) {
+#ifdef USE_NEW_TABLE_FORMAT
+        boss::expressions::ExpressionArguments args;
+        args.emplace_back("List"_());
         columns.emplace_back(ComplexExpression(Symbol(name), {}, std::move(args), {}));
 #else
-        boss::expressions::ExpressionArguments args;
-        args.emplace_back(Symbol(name));
-        args.emplace_back(ComplexExpression("List"_, {}, {}, std::move(spans)));
-        columns.emplace_back(ComplexExpression("Column"_, std::move(args)));
+        columns.emplace_back("Column"_(Symbol(name), "List"_()));
 #endif // USE_NEW_TABLE_FORMAT
       }
     }
