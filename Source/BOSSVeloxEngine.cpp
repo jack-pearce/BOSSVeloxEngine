@@ -644,6 +644,11 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
                        ? std::get<int32_t>(e.getDynamicArguments()[1])
                        : std::get<int64_t>(e.getDynamicArguments()[1]);
     }
+    if(std::get<Symbol>(e.getDynamicArguments()[0]) == "outputBatchNumRows"_) {
+      outputBatchNumRows = std::holds_alternative<int32_t>(e.getDynamicArguments()[1])
+                               ? std::get<int32_t>(e.getDynamicArguments()[1])
+                               : std::get<int64_t>(e.getDynamicArguments()[1]);
+    }
     if(std::get<Symbol>(e.getDynamicArguments()[0]) == "HashAdaptivityEnabled"_) {
       hashAdaptivityEnabled = std::get<bool>(e.getDynamicArguments()[1]);
     }
@@ -660,29 +665,34 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
     return threadPool;
   }();
 
-  auto params = std::make_unique<CursorParameters>();
-  params->maxDrivers = maxThreads;
-  params->copyResult = false;
-  std::shared_ptr<folly::Executor> executor;
-  if(maxThreads < 2) {
-    params->singleThreaded = true;
-  } else {
-    executor = std::make_shared<folly::CPUThreadPoolExecutor>(std::thread::hardware_concurrency());
-  }
-  params->queryCtx = std::make_shared<core::QueryCtx>(
-      executor.get(),
-      core::QueryConfig{std::unordered_map<std::string, std::string>{
-          {core::QueryConfig::kHashAdaptivityEnabled, hashAdaptivityEnabled ? "true" : "false"}}});
-  std::unique_ptr<TaskCursor> cursor;
-
   boss::expressions::ExpressionArguments columns;
   auto evalAndAddOutputSpans = [&, this](auto&& e) {
     auto scanIds = std::vector<std::pair<core::PlanNodeId, size_t>>{};
     auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
     int tableCnt = 0;
     auto plan = buildOperatorPipeline(std::move(e), scanIds, *pool, planNodeIdGenerator, tableCnt);
-    params->planNode = plan.planNode();
 
+    auto params = std::make_unique<CursorParameters>();
+    params->planNode = plan.planNode();
+    params->maxDrivers = maxThreads;
+    params->copyResult = false;
+    std::shared_ptr<folly::Executor> executor;
+    if(maxThreads < 2) {
+      params->singleThreaded = true;
+    } else {
+      executor =
+          std::make_shared<folly::CPUThreadPoolExecutor>(std::thread::hardware_concurrency());
+    }
+    auto config = std::unordered_map<std::string, std::string>{
+        {core::QueryConfig::kHashAdaptivityEnabled, hashAdaptivityEnabled ? "true" : "false"}};
+    if(outputBatchNumRows > 0) {
+      config[core::QueryConfig::kPreferredOutputBatchRows] = std::to_string(outputBatchNumRows);
+      config[core::QueryConfig::kMaxOutputBatchRows] = std::to_string(outputBatchNumRows);
+    }
+    params->queryCtx =
+        std::make_shared<core::QueryCtx>(executor.get(), core::QueryConfig{std::move(config)});
+
+    std::unique_ptr<TaskCursor> cursor;
     auto results = veloxRunQueryParallel(*params, cursor, scanIds);
     if(!cursor) {
       throw std::runtime_error("Query terminated with error");
