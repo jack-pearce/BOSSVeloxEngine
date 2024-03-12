@@ -44,7 +44,7 @@ private:
       threadPools_;
 
   int32_t maxThreads = 1;
-  int32_t outputBatchNumRows = 10'000'000;
+  int32_t outputBatchNumRows = 0;
   bool hashAdaptivityEnabled = true;
 };
 
