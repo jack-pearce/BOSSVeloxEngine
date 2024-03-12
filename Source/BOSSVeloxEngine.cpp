@@ -240,6 +240,7 @@ getColumns(ComplexExpression&& expression, memory::MemoryPool* pool) {
   std::vector<size_t> spanRowCountVec;
   std::vector<BufferPtr> indicesVec;
   auto indicesColumnEndIndex = size_t(-1);
+  std::vector<size_t> otherColumnsSpanIndexes;
 
   if(expression.getHead().getName() == "Gather") {
     auto [head, statics, dynamics, spans] = std::move(expression).decompose();
@@ -255,21 +256,172 @@ getColumns(ComplexExpression&& expression, memory::MemoryPool* pool) {
     auto table = std::get<ComplexExpression>(std::move(*it++));
     auto [tableHead, tableStatic, tableDyn, tableSpans] = std::move(table).decompose();
     indicesColumnEndIndex = tableDyn.size(); // indices don't apply to key columns
+    ExpressionSpanArguments indicesSpans;
+    ExpressionArguments keyColumns;
     for(; it != it_end; ++it) {
       auto argExpr = get<ComplexExpression>(std::move(*it));
       if(argExpr.getHead().getName() == "Indexes") {
         // not a key column, these are the indices
-        assert(indicesVec.empty());
-        auto [unused0, unused1, unused2, indicesSpans] = std::move(argExpr).decompose();
-        indicesVec = getIndices(std::move(indicesSpans));
+        assert(indicesSpans.empty());
+        auto [unused0, unused1, unused2, argExprSpans] = std::move(argExpr).decompose();
+        indicesSpans = std::move(argExprSpans);
         continue;
       }
       // add a key column
-      tableDyn.emplace_back(std::move(argExpr));
+      keyColumns.emplace_back(std::move(argExpr));
     }
-    if(indicesVec.empty()) {
+    if(indicesSpans.empty()) {
       throw std::runtime_error("RadixPartition without Indexes");
     }
+    if(indicesSpans.size() == 1 && !tableDyn.empty()) {
+      auto const& firstColumn = std::get<ComplexExpression>(tableDyn[0]);
+#ifdef USE_NEW_TABLE_FORMAT
+      auto const& firstColumnList = get<ComplexExpression>(firstColumn.getDynamicArguments().at(0));
+#else
+      auto const& firstColumnList = get<ComplexExpression>(firstColumn.getDynamicArguments().at(1));
+#endif
+      auto const& firstColumnSpans = firstColumnList.getSpanArguments();
+      if(firstColumnSpans.size() > 1) {
+        // extract the single indices span, convert to shared ptr
+        // (so multiple span instances can reference it)
+        auto singleIndicesSpan = std::visit(
+            []<typename T>(boss::Span<T>&& typedSpan) {
+              return std::make_shared<ExpressionSpanArgument>(std::move(typedSpan));
+            },
+            std::move(indicesSpans[0]));
+        indicesSpans.clear();
+        // extract the key columns, convert them to shared ptr
+        // (so multiple span instances can reference it)
+        std::vector<std::shared_ptr<ExpressionSpanArgument>> singleKeySpans;
+        for(auto& keyColumn : keyColumns) {
+          auto [head, unused_, dynamics, spans] =
+              std::get<ComplexExpression>(std::move(keyColumn)).decompose();
+#ifdef USE_NEW_TABLE_FORMAT
+          auto list = get<ComplexExpression>(std::move(dynamics[0]));
+#else
+          auto list = get<ComplexExpression>(std::move(dynamics[1]));
+#endif
+          auto [listHead, listUnused_, listDynamics, listSpans] = std::move(list).decompose();
+          singleKeySpans.emplace_back(std::visit(
+              []<typename T>(boss::Span<T>&& typedSpan) {
+                return std::make_shared<ExpressionSpanArgument>(std::move(typedSpan));
+              },
+              std::move(listSpans[0])));
+          list = boss::ComplexExpression(std::move(listHead), {}, std::move(listDynamics), {});
+#ifdef USE_NEW_TABLE_FORMAT
+          dynamics[0] = std::move(list);
+#else
+          dynamics[1] = std::move(list);
+#endif
+          keyColumn =
+              boss::ComplexExpression(std::move(head), {}, std::move(dynamics), std::move(spans));
+        }
+        // reconstruct the indices and the keys
+        std::vector<ExpressionSpanArguments> newKeySpans(singleKeySpans.size());
+        std::visit(
+            [&]<typename T>(boss::Span<T>& typedIndicesSpan) {
+              if constexpr(std::is_same_v<T, int32_t>) {
+                std::vector<size_t> spanRanges;
+                spanRanges.reserve(firstColumnSpans.size() + 1);
+                spanRanges.emplace_back(0);
+                std::transform_inclusive_scan(
+                    firstColumnSpans.begin(), firstColumnSpans.end(),
+                    std::back_inserter(spanRanges), std::plus<size_t>{}, [](auto const& span) {
+                      return std::visit([](auto const& typedSpan) { return typedSpan.size(); },
+                                        span);
+                    });
+                auto typedIndicesSpanIt = typedIndicesSpan.begin();
+                auto typedIndicesSpanItEnd = typedIndicesSpan.end();
+                auto lastIt = typedIndicesSpanIt;
+                auto currentSpanIndex = 0;
+                auto reconstruct = [&]() {
+                  auto length = std::distance(lastIt, typedIndicesSpanIt);
+                  if(length == 0) {
+                     return;
+                  }
+                  //  reconstruct the indices
+                  indicesSpans.emplace_back(
+                      boss::Span<int32_t>(lastIt, length, [v = singleIndicesSpan]() {
+                      }));
+                  // reconstruct the keys
+                  auto offset = std::distance(typedIndicesSpan.begin(), lastIt);
+                  auto oldKeyIt = singleKeySpans.begin();
+                  auto newKeySpansIt = newKeySpans.begin();
+                  for(; oldKeyIt != singleKeySpans.end(); ++oldKeyIt, ++newKeySpansIt) {
+                    auto& oldSingleKeySpan = *oldKeyIt;
+                    std::visit(
+                        [&]<typename U>(boss::Span<U> const& oldSingleKeyTypedSpan) {
+                          newKeySpansIt->emplace_back(
+                              boss::Span<U>(oldSingleKeyTypedSpan.begin() + offset, length,
+                                            [v = oldSingleKeySpan]() {
+                                            }));
+                        },
+                        *oldSingleKeySpan);
+                  }
+                  lastIt = typedIndicesSpanIt;
+                  // keep track of span indexes to reconstruct the other columns accordingly
+                  otherColumnsSpanIndexes.emplace_back(currentSpanIndex);
+                };
+                for(; typedIndicesSpanIt != typedIndicesSpanItEnd; ++typedIndicesSpanIt) {
+                  auto& index = *typedIndicesSpanIt;
+                  if(index >= spanRanges[currentSpanIndex + 1]) {
+                    reconstruct();
+                    while(index >= spanRanges[currentSpanIndex + 1]) {
+                      currentSpanIndex++;
+                    }
+                  } else if(index < spanRanges[currentSpanIndex]) {
+                    reconstruct();
+                    while(index < spanRanges[currentSpanIndex]) {
+                      currentSpanIndex--;
+                    }
+                  }
+                  // conversion from global to local span index
+                  index -= spanRanges[currentSpanIndex];
+                }
+                if(lastIt != typedIndicesSpanItEnd) {
+                  reconstruct();
+                }
+              } else {
+                throw std::runtime_error("index type error");
+              }
+            },
+            *singleIndicesSpan);
+        // add the reconstructed key spans into the table
+        auto keyColumnsIt = keyColumns.begin();
+        for(auto&& newSpans : newKeySpans) {
+          auto [head, unused_, dynamics, spans] =
+              std::get<ComplexExpression>(std::move(*keyColumnsIt++)).decompose();
+
+#ifdef USE_NEW_TABLE_FORMAT
+          auto list = get<ComplexExpression>(std::move(dynamics[0]));
+#else
+          auto list = get<ComplexExpression>(std::move(dynamics[1]));
+#endif
+          auto [listHead, listUnused_, listDynamics, listSpans] = std::move(list).decompose();
+
+          listSpans.clear();
+          listSpans.insert(listSpans.end(), std::make_move_iterator(newSpans.begin()),
+                           std::make_move_iterator(newSpans.end()));
+
+          list = boss::ComplexExpression(std::move(listHead), {}, std::move(listDynamics),
+                                         std::move(listSpans));
+
+#ifdef USE_NEW_TABLE_FORMAT
+          dynamics[0] = std::move(list);
+#else
+          dynamics[1] = std::move(list);
+#endif
+          tableDyn.emplace_back(
+              boss::ComplexExpression(std::move(head), {}, std::move(dynamics), std::move(spans)));
+        }
+        keyColumns.clear();
+      }
+    }
+    for(auto&& keyExpr : keyColumns) {
+      tableDyn.emplace_back(std::move(keyExpr));
+    }
+    indicesVec = getIndices(std::move(indicesSpans));
+
     // get table data
     expression = boss::ComplexExpression(std::move(tableHead), std::move(tableStatic),
                                          std::move(tableDyn), std::move(tableSpans));
@@ -282,8 +434,7 @@ getColumns(ComplexExpression&& expression, memory::MemoryPool* pool) {
 
   std::for_each(
       std::make_move_iterator(columns.begin()), std::make_move_iterator(columns.end()),
-      [&colNameVec, &colTypeVec, &colDataListVec, pool, &indicesVec,
-       &indicesColumnEndIndex](auto&& columnExpr) {
+      [&](auto&& columnExpr) {
         auto column = get<ComplexExpression>(std::forward<decltype(columnExpr)>(columnExpr));
         auto [head, unused_, dynamics, spans] = std::move(column).decompose();
 
@@ -302,14 +453,10 @@ getColumns(ComplexExpression&& expression, memory::MemoryPool* pool) {
           return;
         }
 
-        int numSpan = 0;
-        std::vector<VectorPtr> colDataVec;
-        for(auto& subSpan : listSpans) {
-          BufferPtr indices = nullptr;
-          if(!indicesVec.empty() && colNameVec.size() < indicesColumnEndIndex) {
-            indices = indicesVec[numSpan++];
-          }
-          VectorPtr subColData = std::visit(
+        auto isRadixKeyColumn = bool(colNameVec.size() >= indicesColumnEndIndex);
+
+        auto getVeloxColumnData = [&](auto listSpan, BufferPtr indices) {
+          return std::visit(
               [pool, &indices, &columnName]<typename T>(boss::Span<T>&& typedSpan) -> VectorPtr {
                 if constexpr(std::is_same_v<T, int32_t> || std::is_same_v<T, int64_t> ||
                              std::is_same_v<T, float_t> || std::is_same_v<T, double_t> ||
@@ -323,9 +470,49 @@ getColumns(ComplexExpression&& expression, memory::MemoryPool* pool) {
                       "' with type: " + std::string(typeid(decltype(typedSpan)).name()));
                 }
               },
-              std::move(subSpan));
-          colDataVec.push_back(std::move(subColData));
+              std::move(listSpan));
+        };
+
+        std::vector<VectorPtr> colDataVec;
+        if(isRadixKeyColumn || otherColumnsSpanIndexes.empty()) {
+          size_t numIndiceSpan = 0;
+          for(auto&& listSpan : listSpans) {
+            BufferPtr indices = nullptr;
+            if(!indicesVec.empty() && !isRadixKeyColumn) {
+              indices = indicesVec[numIndiceSpan++];
+            }
+            colDataVec.emplace_back(getVeloxColumnData(std::move(listSpan), std::move(indices)));
+          }
+        } else {
+          // re-construct column spans according the the indexes/keys spans
+          std::vector<std::shared_ptr<ExpressionSpanArgument>> sharedSpans(
+              listSpans.size()); // to be able to re-use spans
+          size_t numIndiceSpan = 0;
+          for(auto spanIndex : otherColumnsSpanIndexes) {
+            BufferPtr indices = nullptr;
+            if(!indicesVec.empty() && !isRadixKeyColumn) {
+              indices = indicesVec[numIndiceSpan++];
+            }
+            auto& sharedSpan = sharedSpans[spanIndex];
+            if(!sharedSpan) {
+              sharedSpan = std::visit(
+                  []<typename T>(boss::Span<T>&& typedSpan) {
+                    return std::make_shared<ExpressionSpanArgument>(std::move(typedSpan));
+                  },
+                  std::move(listSpans[spanIndex]));
+            }
+            auto spanRef = std::visit(
+                [&sharedSpan]<typename U>(
+                    boss::Span<U> const& typedSpanRef) -> ExpressionSpanArgument {
+                  return boss::Span<U>(typedSpanRef.begin(), typedSpanRef.size(),
+                                       [v = sharedSpan]() {
+                                       });
+                },
+                *sharedSpan);
+            colDataVec.emplace_back(getVeloxColumnData(std::move(spanRef), std::move(indices)));
+          }
         }
+
         auto columnType = colDataVec[0]->type();
         colNameVec.emplace_back(columnName);
         colTypeVec.emplace_back(columnType);
