@@ -181,6 +181,10 @@ transformDynamicsToSpans(ComplexExpressionWithStaticArguments<StaticArgumentType
   }
   dynamics.erase(dynamics.begin(), it.base());
 
+  if(spanInputs.empty()) {
+    return {std::move(head), std::move(statics), {}, std::move(oldSpans)};
+  }
+
   ExpressionSpanArguments spans;
   std::transform(
       std::move_iterator(spanInputs.begin()), std::move_iterator(spanInputs.end()),
@@ -535,7 +539,7 @@ getColumns(ComplexExpression&& expression, memory::MemoryPool* pool) {
 
   auto tableSchema =
       TypeFactory<TypeKind::ROW>::create(std::move(colNameVec), std::move(colTypeVec));
-  return {rowDataVec, tableSchema, spanRowCountVec};
+  return {std::move(rowDataVec), std::move(tableSchema), std::move(spanRowCountVec)};
 }
 
 static std::string projectionExpressionToString(Expression&& e);
