@@ -65,56 +65,55 @@ using ExpressionSpanArgument = boss::expressions::ExpressionSpanArgument;
 using expressions::generic::ArgumentWrapper;
 using expressions::generic::ExpressionArgumentsWithAdditionalCustomAtomsWrapper;
 
-template <typename T> boss::Span<T const> createBossSpan(VectorPtr const& vec) {
-  auto const* data = vec->values()->as<T>();
+template <typename T> boss::Span<T> createBossSpan(VectorPtr&& vec) {
+  auto* data = const_cast<T*>(vec->values()->as<T>());
   auto length = vec->size();
-  VectorPtr ptrCopy = vec;
-  return boss::Span<T const>(data, length, [v = std::move(ptrCopy)]() {});
+  return boss::Span<T>(data, length, [v = std::move(vec)]() {});
 }
 
-static ExpressionSpanArgument veloxtoSpan(VectorPtr const& vec) {
-  if(vec->typeKind() == TypeKind::INTEGER) {
-    return createBossSpan<int32_t>(vec);
+static ExpressionSpanArgument veloxtoSpan(VectorPtr vec) {
+  switch(vec->typeKind()) {
+  case TypeKind::INTEGER:
+    return createBossSpan<int32_t>(std::move(vec));
+  case TypeKind::BIGINT:
+    return createBossSpan<int64_t>(std::move(vec));
+  case TypeKind::REAL:
+    return createBossSpan<float_t>(std::move(vec));
+  case TypeKind::DOUBLE:
+    return createBossSpan<double_t>(std::move(vec));
+  default:
+    throw std::runtime_error("veloxToSpan: array type not supported: " +
+                             facebook::velox::mapTypeKindToName(vec->typeKind()));
   }
-  if(vec->typeKind() == TypeKind::BIGINT) {
-    return createBossSpan<int64_t>(vec);
-  }
-  if(vec->typeKind() == TypeKind::REAL) {
-    return createBossSpan<float_t>(vec);
-  }
-  if(vec->typeKind() == TypeKind::DOUBLE) {
-    return createBossSpan<double_t>(vec);
-  }
-  throw std::runtime_error("veloxToSpan: array type not supported: " +
-                           facebook::velox::mapTypeKindToName(vec->typeKind()));
 }
 
 template <typename T>
-VectorPtr spanToVelox(boss::Span<T>&& span, memory::MemoryPool* pool, BufferPtr indices = nullptr) {
-  BossArray bossArray(span.size(), span.begin(), std::move(span));
-
-  auto createDictVector = [](BufferPtr& indices, auto flatVecPtr) {
+VectorPtr spanToVelox(boss::Span<T>&& span, memory::MemoryPool* pool, BufferPtr& indices) {
+  auto createDictVector = [&indices](auto&& flatVecPtr) {
     auto indicesSize = indices->size() / sizeof(int32_t);
     return BaseVector::wrapInDictionary(BufferPtr(nullptr), indices, indicesSize,
                                         std::move(flatVecPtr));
   };
 
-  auto createVeloxVector = [&](auto bossType) {
-    auto flatVecPtr = importFromBossAsOwner(bossType, bossArray, pool);
+  auto createVeloxVector = [&indices, &createDictVector, &pool](auto&& span, auto bossType) {
+    auto spanLength = span.size();
+    auto spanBegin = span.begin();
+    BossArray bossArray(spanLength, spanBegin, std::move(span));
+    auto flatVecPtr = importFromBossAsOwner(bossType, std::move(bossArray), pool);
     if(indices == nullptr) {
       return flatVecPtr;
     }
-    return createDictVector(indices, flatVecPtr);
+    return createDictVector(std::move(flatVecPtr));
   };
 
   if constexpr(std::is_same_v<T, int32_t> || std::is_same_v<T, int32_t const>) {
-    return createVeloxVector(BossType::bINTEGER);
+    return createVeloxVector(std::move(span), BossType::bINTEGER);
   } else if constexpr(std::is_same_v<T, int64_t> || std::is_same_v<T, int64_t const>) {
-    return createVeloxVector(BossType::bBIGINT);
+    return createVeloxVector(std::move(span), BossType::bBIGINT);
   } else if constexpr(std::is_same_v<T, float_t> || std::is_same_v<T, float_t const>) {
-    return createVeloxVector(BossType::bREAL);
+    return createVeloxVector(std::move(span), BossType::bREAL);
   } else if constexpr(std::is_same_v<T, double_t> || std::is_same_v<T, double_t const>) {
-    return createVeloxVector(BossType::bDOUBLE);
+    return createVeloxVector(std::move(span), BossType::bDOUBLE);
   }
 }
 
@@ -220,21 +219,23 @@ static std::vector<BufferPtr> getIndices(ExpressionSpanArguments&& listSpans) {
   if(listSpans.empty()) {
     throw std::runtime_error("get index error");
   }
-
   std::vector<BufferPtr> indicesVec;
-  for(auto& subSpan : listSpans) {
-    BufferPtr indexData = std::visit(
-        []<typename T>(boss::Span<T>&& typedSpan) -> BufferPtr {
-          if constexpr(std::is_same_v<T, int32_t>) {
-            BossArray bossIndices(typedSpan.size(), typedSpan.begin(), std::move(typedSpan));
-            return importFromBossAsOwnerBuffer(bossIndices);
-          } else {
-            throw std::runtime_error("index type error");
-          }
-        },
-        std::move(subSpan));
-    indicesVec.push_back(std::move(indexData));
-  }
+  std::transform(std::make_move_iterator(listSpans.begin()),
+                 std::make_move_iterator(listSpans.end()), std::back_inserter(indicesVec),
+                 [](auto&& subSpan) {
+                   return std::visit(
+                       []<typename T>(boss::Span<T>&& typedSpan) -> BufferPtr {
+                         if constexpr(std::is_same_v<T, int32_t>) {
+                           auto spanLength = typedSpan.size();
+                           auto spanBegin = typedSpan.begin();
+                           BossArray bossIndices(spanLength, spanBegin, std::move(typedSpan));
+                           return importFromBossAsOwnerBuffer(std::move(bossIndices));
+                         } else {
+                           throw std::runtime_error("index type error");
+                         }
+                       },
+                       std::move(subSpan));
+                 });
   return indicesVec;
 }
 
@@ -341,7 +342,7 @@ getColumns(ComplexExpression&& expression, memory::MemoryPool* pool) {
                 auto reconstruct = [&]() {
                   auto length = std::distance(lastIt, typedIndicesSpanIt);
                   if(length == 0) {
-                     return;
+                    return;
                   }
                   //  reconstruct the indices
                   indicesSpans.emplace_back(
@@ -517,11 +518,13 @@ getColumns(ComplexExpression&& expression, memory::MemoryPool* pool) {
           }
         }
 
-        auto columnType = colDataVec[0]->type();
-        colNameVec.emplace_back(columnName);
-        colTypeVec.emplace_back(columnType);
+        colNameVec.emplace_back(std::move(columnName));
+        colTypeVec.emplace_back(colDataVec[0]->type());
         colDataListVec.push_back(std::move(colDataVec));
       });
+
+  auto tableSchema =
+      TypeFactory<TypeKind::ROW>::create(std::move(colNameVec), std::move(colTypeVec));
 
   if(!colDataListVec.empty()) {
     auto listSize = colDataListVec[0].size();
@@ -532,13 +535,11 @@ getColumns(ComplexExpression&& expression, memory::MemoryPool* pool) {
         assert(colDataListVec[j].size() == listSize);
         rowData.push_back(std::move(colDataListVec[j][i]));
       }
-      auto rowVector = makeRowVectorNoCopy(colNameVec, rowData, pool);
-      rowDataVec.push_back(std::move(rowVector));
+      auto rowVector = makeRowVectorNoCopy(tableSchema, std::move(rowData), pool);
+      rowDataVec.emplace_back(std::move(rowVector));
     }
   }
 
-  auto tableSchema =
-      TypeFactory<TypeKind::ROW>::create(std::move(colNameVec), std::move(colTypeVec));
   return {std::move(rowDataVec), std::move(tableSchema), std::move(spanRowCountVec)};
 }
 

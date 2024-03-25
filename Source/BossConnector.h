@@ -15,12 +15,12 @@ namespace boss::engines::velox {
 // the same way).
 class BossColumnHandle : public ColumnHandle {
 public:
-  explicit BossColumnHandle(const std::string& name) : name_(name) {}
+  explicit BossColumnHandle(std::string const& name) : name_(name) {}
 
-  const std::string& name() const { return name_; }
+  std::string const& name() const { return name_; }
 
 private:
-  const std::string name_;
+  std::string const name_;
 };
 
 // TPC-H table handle uses the underlying enum to describe the target table.

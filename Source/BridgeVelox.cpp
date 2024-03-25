@@ -19,7 +19,7 @@ namespace boss::engines::velox {
 // else is referencing the objects.
 struct BufferViewReleaser {
 
-  explicit BufferViewReleaser(std::shared_ptr<BossArray> bossArray)
+  explicit BufferViewReleaser(std::shared_ptr<BossArray>&& bossArray)
       : arrayReleaser_(std::move(bossArray)) {}
 
   void addRef() const {}
@@ -27,14 +27,14 @@ struct BufferViewReleaser {
   void release() const {}
 
 private:
-  std::shared_ptr<BossArray> const arrayReleaser_;
+  std::shared_ptr<BossArray> arrayReleaser_;
 };
 
 // Wraps a naked pointer using a Velox buffer view, without copying it. This
 // buffer view uses shared_ptr to manage reference counting and releasing for
 // the BossArray object
 BufferPtr wrapInBufferViewAsOwner(const void* buffer, size_t length,
-                                  std::shared_ptr<BossArray> arrayReleaser) {
+                                  std::shared_ptr<BossArray>&& arrayReleaser) {
   return BufferView<BufferViewReleaser>::create(static_cast<const uint8_t*>(buffer), length,
                                                 {BufferViewReleaser(std::move(arrayReleaser))});
 }
@@ -49,7 +49,7 @@ VectorPtr createFlatVector(memory::MemoryPool* pool, TypePtr const& type, Buffer
                                          std::nullopt, std::nullopt);
 }
 
-TypePtr importFromBossType(BossType& bossType) {
+TypePtr importFromBossType(BossType bossType) {
   switch(bossType) {
   case boss::engines::velox::bINTEGER:
     return INTEGER();
@@ -63,7 +63,8 @@ TypePtr importFromBossType(BossType& bossType) {
   VELOX_USER_FAIL("Unable to convert '{}' BossType format type to Velox.", bossType)
 }
 
-VectorPtr importFromBossAsOwner(BossType bossType, BossArray& bossArray, memory::MemoryPool* pool) {
+VectorPtr importFromBossAsOwner(BossType bossType, BossArray&& bossArray,
+                                memory::MemoryPool* pool) {
   VELOX_CHECK_GE(bossArray.length, 0, "Array length needs to be non-negative.")
 
   // First parse and generate a Velox type.
@@ -80,22 +81,21 @@ VectorPtr importFromBossAsOwner(BossType bossType, BossArray& bossArray, memory:
   // Wrap the values buffer into a Velox BufferView - zero-copy.
   const auto* buffer = bossArray.buffers;
   auto length = bossArray.length * type->cppSizeInBytes();
-  std::shared_ptr<BossArray> const arrayReleaser(new BossArray(std::move(bossArray)));
-  auto values = wrapInBufferViewAsOwner(buffer, length, arrayReleaser);
+  auto arrayReleaser = std::make_shared<BossArray>(std::move(bossArray));
+  auto values = wrapInBufferViewAsOwner(buffer, length, std::move(arrayReleaser));
 
   return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(createFlatVector, type->kind(), pool, type, nulls,
                                             bossArray.length, values);
 }
 
-BufferPtr importFromBossAsOwnerBuffer(BossArray& bossArray) {
+BufferPtr importFromBossAsOwnerBuffer(BossArray&& bossArray) {
   VELOX_CHECK_GE(bossArray.length, 0, "Array length needs to be non-negative.")
 
   // Wrap the values buffer into a Velox BufferView - zero-copy.
   const auto* buffer = bossArray.buffers;
   auto length = bossArray.length * sizeof(int32_t); // assuming always int32 type!
-  std::shared_ptr<BossArray> const arrayReleaser(new BossArray(std::move(bossArray)));
-  return wrapInBufferViewAsOwner(buffer, length, arrayReleaser);
-  ;
+  auto arrayReleaser = std::make_shared<BossArray>(std::move(bossArray));
+  return wrapInBufferViewAsOwner(buffer, length, std::move(arrayReleaser));
 }
 
 std::vector<RowVectorPtr> myReadCursor(CursorParameters const& params,
@@ -141,17 +141,11 @@ veloxRunQueryParallel(CursorParameters const& params, std::unique_ptr<TaskCursor
   }
 }
 
-RowVectorPtr makeRowVectorNoCopy(std::vector<std::string> childNames,
-                                 std::vector<VectorPtr> children, memory::MemoryPool* pool) {
-  std::vector<std::shared_ptr<Type const>> childTypes;
-  childTypes.resize(children.size());
-  for(int i = 0; i < children.size(); i++) {
-    childTypes[i] = children[i]->type();
-  }
-  auto rowType = ROW(std::move(childNames), std::move(childTypes));
+RowVectorPtr makeRowVectorNoCopy(std::shared_ptr<RowType const>& schema,
+                                 std::vector<VectorPtr>&& children, memory::MemoryPool* pool) {
   size_t const vectorSize = children.empty() ? 0 : children.front()->size();
-
-  return std::make_shared<RowVector>(pool, rowType, BufferPtr(nullptr), vectorSize, children);
+  return std::make_shared<RowVector>(pool, schema, BufferPtr(nullptr), vectorSize,
+                                     std::move(children));
 }
 
 } // namespace boss::engines::velox
