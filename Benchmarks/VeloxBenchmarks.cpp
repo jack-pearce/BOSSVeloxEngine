@@ -73,10 +73,7 @@ void runRadixJoin(benchmark::State& state, size_t buildsize, size_t probesize, s
 
   eval("Set"_("HashAdaptivityEnabled"_, hashAdaptivity));
 
-  eval("Set"_("MaxDrivers"_, (int32_t)1));
-
-  eval("Set"_("NumSplits"_, (int32_t)(10000 / numPartitions)));
-  // eval("Set"_("NumSplits"_, (int32_t)0)); // set to 0 to keep the original partitioning
+  eval("Set"_("maxThreads"_, 1));
 
   static const int32_t batchSize = 1024;
 
@@ -237,7 +234,7 @@ void runRadixJoin(benchmark::State& state, size_t buildsize, size_t probesize, s
         auto orderPositions = std::vector<int32_t>(orderPartitionSize);
         std::iota(orderPositions.begin(), orderPositions.end(), orderOffset);
         std::shuffle(orderPositions.begin(), orderPositions.end(), rengine);
-                
+
         boss::expressions::ExpressionSpanArguments custPositionsSpans;
         if(i < numPartitions / 2) {
           custPositionsSpans.emplace_back(boss::Span<int32_t>{std::move(custPositions)});
@@ -381,17 +378,6 @@ benchmark::internal::Benchmark* RegisterBenchmarkNolint([[maybe_unused]] Args...
   return benchmark::RegisterBenchmark(args...);
 #endif
 }
-template <typename Func>
-void RegisterTest(std::string const& name, Func&& func, float scaleFactor,
-                  unsigned int numPartitions, bool groupedExecution) {
-  std::ostringstream testName;
-  testName << name;
-  testName << "/SF:" << scaleFactor;
-  testName << "/Parts:" << numPartitions;
-  testName << "/Grouped:" << groupedExecution;
-  RegisterBenchmarkNolint(testName.str().c_str(), func, scaleFactor, numPartitions,
-                          groupedExecution);
-}
 
 template <typename Func>
 void RegisterBOSSTest(std::string const& name, Func&& func, size_t buildsize, size_t probesize,
@@ -420,9 +406,14 @@ void initAndRunBenchmarks(int argc, char** argv) {
         for(auto useDictionary : std::vector<int>{0, 1, 2}) {
           for(auto useUnion : std::vector<bool>{false, true}) {
             for(auto multithreaded : std::vector<bool>{false, true}) {
-              for(auto numPartitions :
-                  std::vector<size_t>{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}) {
-                if(multithreaded && useUnion) {
+              if(multithreaded && useUnion) {
+                continue;
+              }
+              for(auto numPartitions : std::vector<size_t>{
+                      1,     2,       4,       8,       16,      32,      64,
+                      128,   256,     512,     1024,    2048,    4096,    8192,
+                      16384, 1 << 15, 1 << 16, 1 << 17, 1 << 18, 1 << 19, 1 << 20}) {
+                if(numPartitions > buildsize) {
                   continue;
                 }
                 RegisterBOSSTest("RadixJoin", runRadixJoin, buildsize, probesize, numPartitions,
