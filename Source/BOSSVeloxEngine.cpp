@@ -65,25 +65,40 @@ using ExpressionSpanArgument = boss::expressions::ExpressionSpanArgument;
 using expressions::generic::ArgumentWrapper;
 using expressions::generic::ExpressionArgumentsWithAdditionalCustomAtomsWrapper;
 
-template <typename T> boss::Span<T> createBossSpan(VectorPtr&& vec) {
-  auto* data = const_cast<T*>(vec->values()->as<T>());
-  auto length = vec->size();
-  return boss::Span<T>(data, length, [v = std::move(vec)]() {});
+struct VeloxVectorPayload {
+  VectorPtr vec;
+#ifdef TAKE_OWNERSHIP_OF_TASK_POOLS
+  std::vector<std::shared_ptr<memory::MemoryPool>> taskPools;
+#endif // TAKE_OWNERSHIP_OF_TASK_POOLS
+
+  ~VeloxVectorPayload() {
+    // make sure they are released in this order! (pools at the end)
+    vec.reset();
+#ifdef TAKE_OWNERSHIP_OF_TASK_POOLS
+    taskPools.clear();
+#endif // TAKE_OWNERSHIP_OF_TASK_POOLS
+  }
+};
+
+template <typename T> boss::Span<T> createBossSpan(VeloxVectorPayload&& payload) {
+  auto* data = const_cast<T*>(payload.vec->values()->as<T>());
+  auto length = payload.vec->size();
+  return boss::Span<T>(data, length, [p = std::move(payload)]() {});
 }
 
-static ExpressionSpanArgument veloxtoSpan(VectorPtr vec) {
-  switch(vec->typeKind()) {
+static ExpressionSpanArgument veloxtoSpan(VeloxVectorPayload&& payload) {
+  switch(payload.vec->typeKind()) {
   case TypeKind::INTEGER:
-    return createBossSpan<int32_t>(std::move(vec));
+    return createBossSpan<int32_t>(std::move(payload));
   case TypeKind::BIGINT:
-    return createBossSpan<int64_t>(std::move(vec));
+    return createBossSpan<int64_t>(std::move(payload));
   case TypeKind::REAL:
-    return createBossSpan<float_t>(std::move(vec));
+    return createBossSpan<float_t>(std::move(payload));
   case TypeKind::DOUBLE:
-    return createBossSpan<double_t>(std::move(vec));
+    return createBossSpan<double_t>(std::move(payload));
   default:
     throw std::runtime_error("veloxToSpan: array type not supported: " +
-                             facebook::velox::mapTypeKindToName(vec->typeKind()));
+                             facebook::velox::mapTypeKindToName(payload.vec->typeKind()));
   }
 }
 
@@ -900,17 +915,26 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
       for(auto& result : results) {
         // make sure that lazy vectors are computed
         result->loadedVector();
+#ifndef TAKE_OWNERSHIP_OF_TASK_POOLS
         // copy the result such that it is own by *OUR* memory pool
         // (this also ensure to flatten vectors wrapped in a dictionary)
         auto copy = BaseVector::create<RowVector>(result->type(), result->size(), pool.get());
         copy->copy(result.get(), 0, 0, result->size());
         result = std::move(copy);
+#endif // !TAKE_OWNERSHIP_OF_TASK_POOLS
       }
       auto const& rowType = dynamic_cast<const RowType*>(results[0]->type().get());
       for(int i = 0; i < results[0]->childrenSize(); ++i) {
         ExpressionSpanArguments spans;
         for(auto& result : results) {
-          spans.emplace_back(veloxtoSpan(result->childAt(i)));
+          auto& vec = result->childAt(i);
+#ifdef TAKE_OWNERSHIP_OF_TASK_POOLS
+          BaseVector::flattenVector(vec); // flatten dictionaries
+          VeloxVectorPayload payload{std::move(vec), cursor->task()->childPools()};
+          spans.emplace_back(veloxtoSpan(std::move(payload)));
+#else
+          spans.emplace_back(veloxtoSpan({std::move(vec)}));
+#endif // TAKE_OWNERSHIP_OF_TASK_POOLS
         }
         auto const& name = rowType->nameOf(i);
         auto listExpr = ComplexExpression{"List"_, {}, {}, std::move(spans)};

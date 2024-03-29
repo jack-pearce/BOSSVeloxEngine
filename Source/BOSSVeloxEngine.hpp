@@ -17,6 +17,8 @@ __declspec(dllexport) void reset();
 
 #define USE_NEW_TABLE_FORMAT
 
+// #define TAKE_OWNERSHIP_OF_TASK_POOLS // requires velox patch to Task.h
+
 // #define DebugInfo
 
 namespace boss::engines::velox {
