@@ -851,10 +851,15 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
                        ? std::get<int32_t>(e.getDynamicArguments()[1])
                        : std::get<int64_t>(e.getDynamicArguments()[1]);
     }
-    if(std::get<Symbol>(e.getDynamicArguments()[0]) == "outputBatchNumRows"_) {
-      outputBatchNumRows = std::holds_alternative<int32_t>(e.getDynamicArguments()[1])
-                               ? std::get<int32_t>(e.getDynamicArguments()[1])
-                               : std::get<int64_t>(e.getDynamicArguments()[1]);
+    if(std::get<Symbol>(e.getDynamicArguments()[0]) == "internalBatchNumRows"_) {
+      internalBatchNumRows = std::holds_alternative<int32_t>(e.getDynamicArguments()[1])
+                                 ? std::get<int32_t>(e.getDynamicArguments()[1])
+                                 : std::get<int64_t>(e.getDynamicArguments()[1]);
+    }
+    if(std::get<Symbol>(e.getDynamicArguments()[0]) == "minimumOutputBatchNumRows"_) {
+      minimumOutputBatchNumRows = std::holds_alternative<int32_t>(e.getDynamicArguments()[1])
+                                      ? std::get<int32_t>(e.getDynamicArguments()[1])
+                                      : std::get<int64_t>(e.getDynamicArguments()[1]);
     }
     if(std::get<Symbol>(e.getDynamicArguments()[0]) == "HashAdaptivityEnabled"_) {
       hashAdaptivityEnabled = std::get<bool>(e.getDynamicArguments()[1]);
@@ -892,12 +897,10 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
     }
     auto config = std::unordered_map<std::string, std::string>{
         {core::QueryConfig::kHashAdaptivityEnabled, hashAdaptivityEnabled ? "true" : "false"}};
-#ifndef MERGE_OUTPUT_BATCHES_TO_MINIMUM_OUTPUT_SIZE
-    if(outputBatchNumRows > 0) {
-      config[core::QueryConfig::kPreferredOutputBatchRows] = std::to_string(outputBatchNumRows);
-      config[core::QueryConfig::kMaxOutputBatchRows] = std::to_string(outputBatchNumRows);
+    if(internalBatchNumRows > 0) {
+      config[core::QueryConfig::kPreferredOutputBatchRows] = std::to_string(internalBatchNumRows);
+      config[core::QueryConfig::kMaxOutputBatchRows] = std::to_string(internalBatchNumRows);
     }
-#endif // !MERGE_OUTPUT_BATCHES_TO_MINIMUM_OUTPUT_SIZE
     params->queryCtx =
         std::make_shared<core::QueryCtx>(executor.get(), core::QueryConfig{std::move(config)});
 
@@ -914,7 +917,6 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
     std::cout << printPlanWithStats(*params->planNode, stats, false) << std::endl;
 #endif // DebugInfo
     if(!results.empty()) {
-#ifdef MERGE_OUTPUT_BATCHES_TO_MINIMUM_OUTPUT_SIZE
 #ifdef TAKE_OWNERSHIP_OF_TASK_POOLS
       // keep track of which batches have been copied
       // (since they do not need to take ownership of the pools)
@@ -948,7 +950,7 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
         // merge results
         currentCombinedResultSize += result->size();
         resultsToCombine.emplace_back(std::move(result));
-        if(currentCombinedResultSize >= outputBatchNumRows) {
+        if(currentCombinedResultSize >= minimumOutputBatchNumRows) {
           combine();
           currentCombinedResultSize = 0;
           resultsToCombine.clear();
@@ -958,19 +960,7 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
         combine();
       }
       results.resize(currentCombinedResultIdx);
-#else
-      for(auto& result : results) {
-        // make sure that lazy vectors are computed
-        result->loadedVector();
-#ifndef TAKE_OWNERSHIP_OF_TASK_POOLS
-        // copy the result such that it is own by *OUR* memory pool
-        // (this also ensure to flatten vectors wrapped in a dictionary)
-        auto copy = BaseVector::create<RowVector>(result->type(), result->size(), pool.get());
-        copy->copy(result.get(), 0, 0, result->size());
-        result = std::move(copy);
-#endif // !TAKE_OWNERSHIP_OF_TASK_POOLS
-      }
-#endif // MERGE_OUTPUT_BATCHES_TO_MINIMUM_OUTPUT_SIZE
+
       auto const& rowType = dynamic_cast<const RowType*>(results[0]->type().get());
       for(int i = 0; i < results[0]->childrenSize(); ++i) {
         ExpressionSpanArguments spans;

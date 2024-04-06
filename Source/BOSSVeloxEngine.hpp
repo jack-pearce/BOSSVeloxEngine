@@ -17,7 +17,6 @@ __declspec(dllexport) void reset();
 
 #define USE_NEW_TABLE_FORMAT
 
-#define MERGE_OUTPUT_BATCHES_TO_MINIMUM_OUTPUT_SIZE
 #define TAKE_OWNERSHIP_OF_TASK_POOLS // requires velox patch to Task.h
 
 // #define DebugInfo
@@ -47,7 +46,8 @@ private:
       threadPools_;
 
   int32_t maxThreads = 1;
-  int32_t outputBatchNumRows = 0;
+  int32_t internalBatchNumRows = 0;
+  int32_t minimumOutputBatchNumRows = 0;
   bool hashAdaptivityEnabled = true;
 };
 
