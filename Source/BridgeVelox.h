@@ -29,6 +29,7 @@ struct BossArray {
     length = other.length;
     buffers = other.buffers;
     holdSpan = std::move(other.holdSpan);
+    return *this;
   }
 
   BossArray(BossArray const& bossArray) = delete;
