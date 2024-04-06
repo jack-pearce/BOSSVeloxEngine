@@ -892,10 +892,12 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
     }
     auto config = std::unordered_map<std::string, std::string>{
         {core::QueryConfig::kHashAdaptivityEnabled, hashAdaptivityEnabled ? "true" : "false"}};
+#ifndef MERGE_OUTPUT_BATCHES_TO_MINIMUM_OUTPUT_SIZE
     if(outputBatchNumRows > 0) {
       config[core::QueryConfig::kPreferredOutputBatchRows] = std::to_string(outputBatchNumRows);
       config[core::QueryConfig::kMaxOutputBatchRows] = std::to_string(outputBatchNumRows);
     }
+#endif // !MERGE_OUTPUT_BATCHES_TO_MINIMUM_OUTPUT_SIZE
     params->queryCtx =
         std::make_shared<core::QueryCtx>(executor.get(), core::QueryConfig{std::move(config)});
 
@@ -912,6 +914,35 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
     std::cout << printPlanWithStats(*params->planNode, stats, false) << std::endl;
 #endif // DebugInfo
     if(!results.empty()) {
+#ifdef MERGE_OUTPUT_BATCHES_TO_MINIMUM_OUTPUT_SIZE
+      std::vector<RowVectorPtr> resultsToCombine;
+      size_t currentCombinedResultSize = 0;
+      size_t currentCombinedResultIdx = 0;
+      auto combine = [&]() {
+        auto copy = BaseVector::create<RowVector>(resultsToCombine[0]->type(),
+                                                  currentCombinedResultSize, pool.get());
+        size_t combinedStartIdx = 0;
+        for(auto&& result : resultsToCombine) {
+          copy->copy(result.get(), combinedStartIdx, 0, result->size());
+          combinedStartIdx += result->size();
+        }
+        results[currentCombinedResultIdx++] = std::move(copy);
+        currentCombinedResultSize = 0;
+        resultsToCombine.clear();
+      };
+      for(auto& result : results) {
+        result->loadedVector();
+        currentCombinedResultSize += result->size();
+        resultsToCombine.emplace_back(std::move(result));
+        if(currentCombinedResultSize >= outputBatchNumRows) {
+          combine();
+        }
+      }
+      if(currentCombinedResultSize > 0) {
+        combine();
+      }
+      results.resize(currentCombinedResultIdx);
+#else
       for(auto& result : results) {
         // make sure that lazy vectors are computed
         result->loadedVector();
@@ -923,6 +954,7 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
         result = std::move(copy);
 #endif // !TAKE_OWNERSHIP_OF_TASK_POOLS
       }
+#endif // MERGE_OUTPUT_BATCHES_TO_MINIMUM_OUTPUT_SIZE
       auto const& rowType = dynamic_cast<const RowType*>(results[0]->type().get());
       for(int i = 0; i < results[0]->childrenSize(); ++i) {
         ExpressionSpanArguments spans;

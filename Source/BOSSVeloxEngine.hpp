@@ -17,7 +17,11 @@ __declspec(dllexport) void reset();
 
 #define USE_NEW_TABLE_FORMAT
 
-// #define TAKE_OWNERSHIP_OF_TASK_POOLS // requires velox patch to Task.h
+#define MERGE_OUTPUT_BATCHES_TO_MINIMUM_OUTPUT_SIZE
+
+#ifndef MERGE_OUTPUT_BATCHES_TO_MINIMUM_OUTPUT_SIZE
+    //#define TAKE_OWNERSHIP_OF_TASK_POOLS // requires velox patch to Task.h
+#endif // !MERGE_OUTPUT_BATCHES_TO_MINIMUM_OUTPUT_SIZE
 
 // #define DebugInfo
 
