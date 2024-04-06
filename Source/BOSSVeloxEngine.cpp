@@ -915,10 +915,24 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
 #endif // DebugInfo
     if(!results.empty()) {
 #ifdef MERGE_OUTPUT_BATCHES_TO_MINIMUM_OUTPUT_SIZE
+#ifdef TAKE_OWNERSHIP_OF_TASK_POOLS
+      // keep track of which batches have been copied
+      // (since they do not need to take ownership of the pools)
+      std::vector<bool> copiedResults(results.size());
+#endif // TAKE_OWNERSHIP_OF_TASK_POOLS
       std::vector<RowVectorPtr> resultsToCombine;
       size_t currentCombinedResultSize = 0;
       size_t currentCombinedResultIdx = 0;
       auto combine = [&]() {
+#ifdef TAKE_OWNERSHIP_OF_TASK_POOLS
+        if(resultsToCombine.size() == 1) {
+          // avoid copy if no merge is required
+          copiedResults[currentCombinedResultIdx] = true;
+          results[currentCombinedResultIdx++] = std::move(resultsToCombine[0]);
+          return;
+        }
+        copiedResults[currentCombinedResultIdx] = false;
+#endif // TAKE_OWNERSHIP_OF_TASK_POOLS
         auto copy = BaseVector::create<RowVector>(resultsToCombine[0]->type(),
                                                   currentCombinedResultSize, pool.get());
         size_t combinedStartIdx = 0;
@@ -927,15 +941,17 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
           combinedStartIdx += result->size();
         }
         results[currentCombinedResultIdx++] = std::move(copy);
-        currentCombinedResultSize = 0;
-        resultsToCombine.clear();
       };
       for(auto& result : results) {
+        // make sure that lazy vectors are computed
         result->loadedVector();
+        // merge results
         currentCombinedResultSize += result->size();
         resultsToCombine.emplace_back(std::move(result));
         if(currentCombinedResultSize >= outputBatchNumRows) {
           combine();
+          currentCombinedResultSize = 0;
+          resultsToCombine.clear();
         }
       }
       if(currentCombinedResultSize > 0) {
@@ -958,15 +974,18 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
       auto const& rowType = dynamic_cast<const RowType*>(results[0]->type().get());
       for(int i = 0; i < results[0]->childrenSize(); ++i) {
         ExpressionSpanArguments spans;
-        for(auto& result : results) {
+        for(int j = 0; j < results.size(); ++j) {
+          auto& result = results[j];
           auto& vec = result->childAt(i);
 #ifdef TAKE_OWNERSHIP_OF_TASK_POOLS
-          BaseVector::flattenVector(vec); // flatten dictionaries
-          VeloxVectorPayload payload{std::move(vec), cursor->task()->childPools()};
-          spans.emplace_back(veloxtoSpan(std::move(payload)));
-#else
-          spans.emplace_back(veloxtoSpan({std::move(vec)}));
+          if(!copiedResults[j]) {
+            BaseVector::flattenVector(vec); // flatten dictionaries
+            VeloxVectorPayload payload{std::move(vec), cursor->task()->childPools()};
+            spans.emplace_back(veloxtoSpan(std::move(payload)));
+            continue;
+          }
 #endif // TAKE_OWNERSHIP_OF_TASK_POOLS
+          spans.emplace_back(veloxtoSpan({std::move(vec)}));
         }
         auto const& name = rowType->nameOf(i);
         auto listExpr = ComplexExpression{"List"_, {}, {}, std::move(spans)};
