@@ -929,11 +929,10 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
 #ifdef TAKE_OWNERSHIP_OF_TASK_POOLS
         if(resultsToCombine.size() == 1) {
           // avoid copy if no merge is required
-          copiedResults[currentCombinedResultIdx] = true;
           results[currentCombinedResultIdx++] = std::move(resultsToCombine[0]);
           return;
         }
-        copiedResults[currentCombinedResultIdx] = false;
+        copiedResults[currentCombinedResultIdx] = true;
 #endif // TAKE_OWNERSHIP_OF_TASK_POOLS
         auto copy = BaseVector::create<RowVector>(resultsToCombine[0]->type(),
                                                   currentCombinedResultSize, pool.get());
