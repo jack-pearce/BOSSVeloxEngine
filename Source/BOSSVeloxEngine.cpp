@@ -643,6 +643,14 @@ static std::string projectionExpressionToString(ComplexExpression&& e) {
     auto it = std::make_move_iterator(dynamics.begin());
     return fmt::format("avg({})", projectionExpressionToString(std::move(*it)));
   }
+  if(head.getName() == "Min") {
+    auto it = std::make_move_iterator(dynamics.begin());
+    return fmt::format("min({})", projectionExpressionToString(std::move(*it)));
+  }
+  if(head.getName() == "Max") {
+    auto it = std::make_move_iterator(dynamics.begin());
+    return fmt::format("max({})", projectionExpressionToString(std::move(*it)));
+  }
   throw std::runtime_error("Unknown operator: " + head.getName());
 }
 std::string projectionExpressionToString(Expression&& e) {
