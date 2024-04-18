@@ -724,7 +724,7 @@ static std::vector<std::string> expressionToProjections(ComplexExpression&& e) {
   return projections;
 }
 
-static PlanBuilder buildOperatorPipeline(
+PlanBuilder Engine::buildOperatorPipeline(
     ComplexExpression&& e, std::vector<std::pair<core::PlanNodeId, size_t>>& scanIds,
     memory::MemoryPool& pool, std::shared_ptr<core::PlanNodeIdGenerator>& planNodeIdGenerator,
     int tableCnt) {
@@ -823,6 +823,24 @@ static PlanBuilder buildOperatorPipeline(
                                                       : std::get<int64_t>(std::move(*it));
     return inputPlan.topN(groupKeysStr, limit, false);
   }
+  if(e.getHead() == "Let"_) {
+    auto [head, unused_, dynamics, unused2_] = std::move(e).decompose();
+    auto it = std::make_move_iterator(dynamics.begin());
+    auto subexpr = get<ComplexExpression>(std::move(*it++));
+    auto paramExpr = get<ComplexExpression>(std::move(*it++));
+    if(paramExpr.getHead() == "Parallel"_) {
+      auto paramValue = std::holds_alternative<int32_t>(paramExpr.getDynamicArguments()[0])
+                            ? std::get<int32_t>(paramExpr.getDynamicArguments()[0])
+                            : std::get<int64_t>(paramExpr.getDynamicArguments()[0]);
+      auto oldValue = maxThreads;
+      maxThreads = paramValue;
+      auto result =
+          buildOperatorPipeline(std::move(subexpr), scanIds, pool, planNodeIdGenerator, tableCnt);
+      maxThreads = oldValue;
+      return std::move(result);
+    }
+    throw std::runtime_error("Unknown Let parameter: " + paramExpr.getHead().getName());
+  }
   throw std::runtime_error("Unknown relational operator: " + e.getHead().getName());
 }
 
@@ -854,25 +872,30 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
   }
 
   if(e.getHead().getName() == "Set") {
-    if(std::get<Symbol>(e.getDynamicArguments()[0]) == "maxThreads"_) {
+    auto param = std::get<Symbol>(e.getDynamicArguments()[0]);
+    if(param == "maxThreads"_) {
       maxThreads = std::holds_alternative<int32_t>(e.getDynamicArguments()[1])
                        ? std::get<int32_t>(e.getDynamicArguments()[1])
                        : std::get<int64_t>(e.getDynamicArguments()[1]);
+      return true;
     }
-    if(std::get<Symbol>(e.getDynamicArguments()[0]) == "internalBatchNumRows"_) {
+    if(param == "internalBatchNumRows"_) {
       internalBatchNumRows = std::holds_alternative<int32_t>(e.getDynamicArguments()[1])
                                  ? std::get<int32_t>(e.getDynamicArguments()[1])
                                  : std::get<int64_t>(e.getDynamicArguments()[1]);
+      return true;
     }
-    if(std::get<Symbol>(e.getDynamicArguments()[0]) == "minimumOutputBatchNumRows"_) {
+    if(param == "minimumOutputBatchNumRows"_) {
       minimumOutputBatchNumRows = std::holds_alternative<int32_t>(e.getDynamicArguments()[1])
                                       ? std::get<int32_t>(e.getDynamicArguments()[1])
                                       : std::get<int64_t>(e.getDynamicArguments()[1]);
+      return true;
     }
-    if(std::get<Symbol>(e.getDynamicArguments()[0]) == "HashAdaptivityEnabled"_) {
+    if(param == "HashAdaptivityEnabled"_) {
       hashAdaptivityEnabled = std::get<bool>(e.getDynamicArguments()[1]);
+      return true;
     }
-    return true;
+    throw std::runtime_error("Unknown Set parameter: " + param.getName());
   }
 
   static std::mutex m;

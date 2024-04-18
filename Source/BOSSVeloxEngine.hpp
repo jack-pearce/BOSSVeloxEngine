@@ -1,5 +1,7 @@
 #pragma once
 
+#include "BridgeVelox.h"
+
 #include <Expression.hpp>
 
 #include <velox/common/memory/MemoryPool.h>
@@ -49,6 +51,12 @@ private:
   int32_t internalBatchNumRows = 0;
   int32_t minimumOutputBatchNumRows = 0;
   bool hashAdaptivityEnabled = true;
+
+  PlanBuilder buildOperatorPipeline(ComplexExpression&& e,
+                                    std::vector<std::pair<core::PlanNodeId, size_t>>& scanIds,
+                                    memory::MemoryPool& pool,
+                                    std::shared_ptr<core::PlanNodeIdGenerator>& planNodeIdGenerator,
+                                    int tableCnt);
 };
 
 } // namespace boss::engines::velox
