@@ -56,7 +56,7 @@ private:
                                     std::vector<std::pair<core::PlanNodeId, size_t>>& scanIds,
                                     memory::MemoryPool& pool,
                                     std::shared_ptr<core::PlanNodeIdGenerator>& planNodeIdGenerator,
-                                    int tableCnt);
+                                    int& tableCnt, int& joinCnt);
 };
 
 } // namespace boss::engines::velox

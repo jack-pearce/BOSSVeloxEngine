@@ -727,7 +727,7 @@ static std::vector<std::string> expressionToProjections(ComplexExpression&& e) {
 PlanBuilder Engine::buildOperatorPipeline(
     ComplexExpression&& e, std::vector<std::pair<core::PlanNodeId, size_t>>& scanIds,
     memory::MemoryPool& pool, std::shared_ptr<core::PlanNodeIdGenerator>& planNodeIdGenerator,
-    int tableCnt) {
+    int& tableCnt, int& joinCnt) {
   if(e.getHead().getName() == "Table" || e.getHead().getName() == "Gather" ||
      e.getHead().getName() == "RadixPartition") {
     auto tableName = fmt::format("Table{}", tableCnt++);
@@ -761,7 +761,7 @@ PlanBuilder Engine::buildOperatorPipeline(
     auto [unused0_, unused1_, dynamics, unused2_] = std::move(e).decompose();
     auto it = std::make_move_iterator(dynamics.begin());
     auto inputPlan = buildOperatorPipeline(get<ComplexExpression>(std::move(*it++)), scanIds, pool,
-                                           planNodeIdGenerator, tableCnt);
+                                           planNodeIdGenerator, tableCnt, joinCnt);
     auto asExpr = get<ComplexExpression>(std::move(*it++));
     return inputPlan.project(expressionToProjections(std::move(asExpr)));
   }
@@ -769,17 +769,20 @@ PlanBuilder Engine::buildOperatorPipeline(
     auto [unused0_, unused1_, dynamics, unused2_] = std::move(e).decompose();
     auto it = std::make_move_iterator(dynamics.begin());
     auto inputPlan = buildOperatorPipeline(get<ComplexExpression>(std::move(*it++)), scanIds, pool,
-                                           planNodeIdGenerator, tableCnt);
+                                           planNodeIdGenerator, tableCnt, joinCnt);
     auto predStr = projectionExpressionToString(std::move(*it));
     return inputPlan.filter(predStr);
   }
   if(e.getHead() == "Join"_) {
+    ++joinCnt;
     auto [unused0_, unused1_, dynamics, unused2_] = std::move(e).decompose();
     auto it = std::make_move_iterator(dynamics.begin());
-    auto buildSideInputPlan = buildOperatorPipeline(get<ComplexExpression>(std::move(*it++)),
-                                                    scanIds, pool, planNodeIdGenerator, tableCnt);
-    auto probeSideInputPlan = buildOperatorPipeline(get<ComplexExpression>(std::move(*it++)),
-                                                    scanIds, pool, planNodeIdGenerator, tableCnt);
+    auto buildSideInputPlan =
+        buildOperatorPipeline(get<ComplexExpression>(std::move(*it++)), scanIds, pool,
+                              planNodeIdGenerator, tableCnt, joinCnt);
+    auto probeSideInputPlan =
+        buildOperatorPipeline(get<ComplexExpression>(std::move(*it++)), scanIds, pool,
+                              planNodeIdGenerator, tableCnt, joinCnt);
     auto whereExpr = std::move(get<ComplexExpression>(*it));
     auto [unused3_, unused4_, whereDyns, unused5_] = std::move(whereExpr).decompose();
     auto [buildSideKeys, probeSideKeys] =
@@ -796,7 +799,7 @@ PlanBuilder Engine::buildOperatorPipeline(
     auto it = std::make_move_iterator(dynamics.begin());
     auto itEnd = std::make_move_iterator(dynamics.end());
     auto inputPlan = buildOperatorPipeline(get<ComplexExpression>(std::move(*it++)), scanIds, pool,
-                                           planNodeIdGenerator, tableCnt);
+                                           planNodeIdGenerator, tableCnt, joinCnt);
     auto secondArg = std::move(*it++);
     auto groupKeysStr =
         it == itEnd ? std::vector<std::string>{} : expressionToOneSideKeys(std::move(secondArg));
@@ -809,19 +812,19 @@ PlanBuilder Engine::buildOperatorPipeline(
     auto [head, unused_, dynamics, unused2_] = std::move(e).decompose();
     auto it = std::make_move_iterator(dynamics.begin());
     auto inputPlan = buildOperatorPipeline(get<ComplexExpression>(std::move(*it++)), scanIds, pool,
-                                           planNodeIdGenerator, tableCnt);
+                                           planNodeIdGenerator, tableCnt, joinCnt);
     auto groupKeysStr = expressionToOneSideKeys(std::move(*it));
-    return inputPlan.orderBy(groupKeysStr, false);
+    return inputPlan.orderBy(groupKeysStr, true).localMerge(groupKeysStr);
   }
   if(e.getHead() == "Top"_ || e.getHead() == "TopN"_) {
     auto [head, unused_, dynamics, unused2_] = std::move(e).decompose();
     auto it = std::make_move_iterator(dynamics.begin());
     auto inputPlan = buildOperatorPipeline(get<ComplexExpression>(std::move(*it++)), scanIds, pool,
-                                           planNodeIdGenerator, tableCnt);
+                                           planNodeIdGenerator, tableCnt, joinCnt);
     auto groupKeysStr = expressionToOneSideKeys(std::move(*it++));
     auto limit = std::holds_alternative<int32_t>(*it) ? std::get<int32_t>(std::move(*it))
                                                       : std::get<int64_t>(std::move(*it));
-    return inputPlan.topN(groupKeysStr, limit, false);
+    return inputPlan.topN(groupKeysStr, limit, true).localMerge(groupKeysStr);
   }
   if(e.getHead() == "Let"_) {
     auto [head, unused_, dynamics, unused2_] = std::move(e).decompose();
@@ -834,8 +837,8 @@ PlanBuilder Engine::buildOperatorPipeline(
                             : std::get<int64_t>(paramExpr.getDynamicArguments()[0]);
       auto oldValue = maxThreads;
       maxThreads = paramValue;
-      auto result =
-          buildOperatorPipeline(std::move(subexpr), scanIds, pool, planNodeIdGenerator, tableCnt);
+      auto result = buildOperatorPipeline(std::move(subexpr), scanIds, pool, planNodeIdGenerator,
+                                          tableCnt, joinCnt);
       maxThreads = oldValue;
       return std::move(result);
     }
@@ -913,11 +916,13 @@ boss::Expression Engine::evaluate(boss::ComplexExpression&& e) {
     auto scanIds = std::vector<std::pair<core::PlanNodeId, size_t>>{};
     auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();
     int tableCnt = 0;
-    auto plan = buildOperatorPipeline(std::move(e), scanIds, *pool, planNodeIdGenerator, tableCnt);
+    int joinCnt = 0;
+    auto plan =
+        buildOperatorPipeline(std::move(e), scanIds, *pool, planNodeIdGenerator, tableCnt, joinCnt);
 
     auto params = std::make_unique<CursorParameters>();
     params->planNode = plan.planNode();
-    params->maxDrivers = maxThreads;
+    params->maxDrivers = std::max(1, (maxThreads / (joinCnt + 1)) - 1);
     params->copyResult = false;
     std::shared_ptr<folly::Executor> executor;
     if(maxThreads < 2) {
